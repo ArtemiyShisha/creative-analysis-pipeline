@@ -1,6 +1,6 @@
 # Core ML dependencies (CPU-only for cloud)
-torch==2.0.1
-torchvision==0.15.2
+torch>=2.5.0
+torchvision>=0.20.0
 numpy>=1.24.0,<2.0.0
 scipy>=1.10.0
 
