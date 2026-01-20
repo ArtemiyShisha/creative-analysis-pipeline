@@ -18,12 +18,16 @@ from PIL import Image, ImageDraw, ImageFont
 from deepgaze_pytorch import DeepGazeIIE
 from scipy.special import logsumexp
 
-# Load API key from config
-try:
-    from config import OPENAI_API_KEY as API_KEY
-except ImportError:
-    print("⚠️  Warning: config.py not found. Please copy config.example.py to config.py and add your API key.")
-    API_KEY = os.environ.get('OPENAI_API_KEY', '')
+# Load API key (prioritize environment variables for cloud deployment)
+API_KEY = os.environ.get('OPENAI_API_KEY', '')
+
+# If not in environment, try importing from config.py (local development)
+if not API_KEY:
+    try:
+        from config import OPENAI_API_KEY as API_KEY
+    except ImportError:
+        print("⚠️  Warning: API key not found. For Streamlit Cloud, add OPENAI_API_KEY to Secrets. For local, copy config.example.py to config.py and add your API key.")
+        API_KEY = ''
 
 def print_step(step, title):
     print(f"\n{'='*70}")
