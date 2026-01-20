@@ -128,13 +128,21 @@ st.markdown("""
 # Import and validation
 def validate_api_key():
     """Check if OpenAI API key is configured"""
-    try:
-        from config import OPENAI_API_KEY
-        if not OPENAI_API_KEY or OPENAI_API_KEY == "":
-            return False, "⚠️ Отсутствует API ключ OpenAI. Добавьте его в config.py"
-        return True, None
-    except ImportError:
-        return False, "⚠️ Файл config.py не найден. Скопируйте config.example.py в config.py и добавьте API ключ"
+    # Try to get from environment (Streamlit Cloud Secrets)
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+
+    # If not in env, try importing from config.py (local development)
+    if not api_key:
+        try:
+            from config import OPENAI_API_KEY
+            api_key = OPENAI_API_KEY
+        except ImportError:
+            pass
+
+    if not api_key or api_key == "":
+        return False, "⚠️ Отсутствует API ключ OpenAI.\n\n**Для Streamlit Cloud:** Добавьте `OPENAI_API_KEY` в Settings → Secrets\n\n**Для локальной разработки:** Скопируйте config.example.py в config.py и добавьте API ключ"
+
+    return True, None
 
 
 def validate_image(image_file):
