@@ -10,8 +10,8 @@ opencv-python-headless>=4.8.0
 scikit-image>=0.21.0
 matplotlib>=3.7.0
 
-# DeepGaze for saliency prediction
-deepgaze-pytorch
+# DeepGaze for saliency prediction (installed from GitHub)
+git+https://github.com/matthias-k/DeepGaze.git
 
 # OCR
 easyocr>=1.7.0
