@@ -1,0 +1,340 @@
+"""
+Streamlit Web UI for Creative Analysis Pipeline
+
+Launch with: streamlit run app.py
+Then open the URL shown in terminal (usually http://localhost:8501)
+"""
+
+import os
+import streamlit as st
+import pandas as pd
+from analyze_creative_final import analyze_creative_final
+
+# Page config
+st.set_page_config(
+    page_title="Анализ креатива",
+    page_icon="🎨",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Minimal white theme CSS
+st.markdown("""
+<style>
+    /* Clean white design */
+    .stApp {
+        background-color: #ffffff;
+    }
+
+    /* Headers - simple and clean */
+    h1 {
+        color: #000000 !important;
+        font-size: 2.5rem !important;
+        font-weight: 600 !important;
+        margin-bottom: 0.5rem !important;
+        letter-spacing: -0.02em;
+    }
+
+    h2, h3 {
+        color: #000000 !important;
+        font-weight: 500 !important;
+    }
+
+    /* Text */
+    .stMarkdown p {
+        color: #666666;
+        font-size: 1rem;
+        line-height: 1.5;
+    }
+
+    /* File uploader - minimal border */
+    [data-testid="stFileUploader"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 2rem;
+    }
+
+    /* Primary button - black */
+    .stButton > button[kind="primary"] {
+        background-color: #000000 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 6px !important;
+        padding: 0.6rem 1.5rem !important;
+        font-size: 1rem !important;
+        font-weight: 500 !important;
+    }
+
+    .stButton > button[kind="primary"]:hover {
+        background-color: #333333 !important;
+    }
+
+    /* Download buttons - outlined */
+    .stDownloadButton > button {
+        background-color: white !important;
+        border: 1px solid #e0e0e0 !important;
+        color: #000000 !important;
+        border-radius: 6px !important;
+        padding: 0.6rem 1.5rem !important;
+    }
+
+    .stDownloadButton > button:hover {
+        border-color: #000000 !important;
+    }
+
+    /* Tables - minimal */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+    }
+
+    /* Images - subtle border */
+    [data-testid="stImage"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+    }
+
+    /* Progress bar - black */
+    .stProgress > div > div {
+        background-color: #000000 !important;
+    }
+
+    /* Expander - clean */
+    .streamlit-expanderHeader {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+    }
+
+    /* Container spacing */
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 1100px !important;
+    }
+
+    /* Horizontal rule */
+    hr {
+        border-color: #e0e0e0 !important;
+        margin: 2rem 0 !important;
+    }
+
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# Import and validation
+def validate_api_key():
+    """Check if OpenAI API key is configured"""
+    try:
+        from config import OPENAI_API_KEY
+        if not OPENAI_API_KEY or OPENAI_API_KEY == "":
+            return False, "⚠️ Отсутствует API ключ OpenAI. Добавьте его в config.py"
+        return True, None
+    except ImportError:
+        return False, "⚠️ Файл config.py не найден. Скопируйте config.example.py в config.py и добавьте API ключ"
+
+
+def validate_image(image_file):
+    """Validate uploaded image"""
+    if not image_file:
+        return False, "Изображение не загружено"
+
+    if not image_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+        return False, "Неверный формат. Загрузите PNG или JPG"
+
+    # Check file size (max 10MB)
+    if image_file.size > 10 * 1024 * 1024:
+        size_mb = image_file.size / (1024 * 1024)
+        return False, f"Файл слишком большой ({size_mb:.1f}МБ). Максимум 10МБ"
+
+    return True, None
+
+
+def format_results(results):
+    """Convert analysis results to UI-friendly format"""
+
+    # Score with emoji stars
+    score = results['overall_score']
+    stars = "⭐" * int(score)
+    score_md = f"## Общая оценка: {stars} {score}/5.0\n\n{results['reasoning']}"
+
+    # Zone table (pandas DataFrame)
+    zones_df = pd.DataFrame([
+        {
+            'Тип': z['type'],
+            'Текст': z['label'][:40] + ('...' if len(z['label']) > 40 else ''),
+            'Внимание %': f"{z['attention_pct']:.1f}%"
+        }
+        for z in results['zones']
+    ])
+
+    # Visualization and heatmap paths
+    base_name = os.path.splitext(os.path.basename(results['image']))[0]
+    viz_path = f"{base_name}_final.jpg"
+    heatmap_path = f"{base_name}_heatmap.jpg"
+
+    # Recommendations in markdown
+    recs_md = ""
+    priority_emoji = {'High': '🔴', 'Medium': '🟡', 'Low': '🟢'}
+    priority_ru = {'High': 'Высокий', 'Medium': 'Средний', 'Low': 'Низкий'}
+    for i, rec in enumerate(results['recommendations'], 1):
+        emoji = priority_emoji.get(rec['priority'], '⚪')
+        priority_text = priority_ru.get(rec['priority'], rec['priority'])
+        recs_md += f"### {i}. {emoji} {priority_text}: {rec['title']}\n\n"
+        recs_md += f"{rec['description']}\n\n"
+        recs_md += f"**Ожидаемый эффект:** {rec['expected_impact']}\n\n"
+        recs_md += "---\n\n"
+
+    # JSON file path
+    json_path = f"{base_name}_final.json"
+
+    return score_md, zones_df, viz_path, heatmap_path, recs_md, json_path
+
+
+# Header
+st.markdown("# Анализ креатива")
+st.markdown("Автоматический анализ рекламных креативов с помощью AI и симуляции взгляда")
+
+st.markdown("---")
+
+# Validate API key on startup
+api_valid, api_msg = validate_api_key()
+if not api_valid:
+    st.error(api_msg)
+    st.stop()
+
+# Input section
+st.markdown("---")
+uploaded_file = st.file_uploader(
+    "Загрузите креатив (PNG/JPG)",
+    type=['png', 'jpg', 'jpeg'],
+    help="Выберите изображение рекламного креатива"
+)
+
+# Display uploaded image preview
+if uploaded_file:
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.image(uploaded_file, caption="Загруженное изображение", use_container_width=True)
+
+if st.button("Анализировать", type="primary", use_container_width=True):
+
+    # Validate image
+    img_valid, img_msg = validate_image(uploaded_file)
+    if not img_valid:
+        st.error(f"## ❌ Error\n\n{img_msg}")
+        st.stop()
+
+    # Save uploaded file temporarily
+    temp_path = f"/tmp/{uploaded_file.name}"
+    with open(temp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    try:
+        # Progress tracking
+        progress_bar = st.progress(0, text="Начинаем анализ...")
+
+        with st.spinner("Генерация карты внимания и анализ зон..."):
+            progress_bar.progress(0.05, text="Генерация карты внимания...")
+
+            # Run analysis
+            results = analyze_creative_final(temp_path, filter_legal=True)
+
+            progress_bar.progress(1.0, text="✅ Анализ завершен!")
+
+        # Format results
+        score_md, zones_df, viz_path, heatmap_path, recs_md, json_path = format_results(results)
+
+        # Clear progress bar
+        progress_bar.empty()
+
+        # Display results
+        st.markdown("---")
+
+        # Overall Score
+        st.markdown(score_md)
+
+        # Zone table
+        st.markdown("### Распределение внимания")
+        st.dataframe(zones_df, use_container_width=True, hide_index=True)
+
+        # Heatmap and visualization side by side
+        st.markdown("### Визуализация")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Тепловая карта**")
+            if os.path.exists(heatmap_path):
+                st.image(heatmap_path, use_container_width=True)
+            else:
+                st.warning("Тепловая карта не найдена")
+
+        with col2:
+            st.markdown("**Разметка зон**")
+            if os.path.exists(viz_path):
+                st.image(viz_path, use_container_width=True)
+            else:
+                st.warning("Разметка не найдена")
+
+        # Recommendations
+        with st.expander("Рекомендации", expanded=True):
+            st.markdown(recs_md)
+
+        # Download buttons
+        st.markdown("### Скачать результаты")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if os.path.exists(json_path):
+                with open(json_path, "rb") as f:
+                    st.download_button(
+                        label="JSON",
+                        data=f,
+                        file_name=json_path,
+                        mime="application/json"
+                    )
+
+        with col2:
+            if os.path.exists(heatmap_path):
+                with open(heatmap_path, "rb") as f:
+                    st.download_button(
+                        label="Тепловая карта",
+                        data=f,
+                        file_name=heatmap_path,
+                        mime="image/jpeg"
+                    )
+
+        with col3:
+            if os.path.exists(viz_path):
+                with open(viz_path, "rb") as f:
+                    st.download_button(
+                        label="Разметка зон",
+                        data=f,
+                        file_name=viz_path,
+                        mime="image/jpeg"
+                    )
+
+    except Exception as e:
+        error_msg = str(e)
+
+        # Check for specific error types
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            st.error("⚠️ Неверный API ключ OpenAI. Проверьте config.py")
+        elif "429" in error_msg or "rate limit" in error_msg.lower():
+            st.error("⚠️ Превышен лимит запросов. Попробуйте позже")
+        elif "api" in error_msg.lower() or "openai" in error_msg.lower():
+            st.error(f"⚠️ Ошибка API: {error_msg}")
+        else:
+            st.error(f"⚠️ Непредвиденная ошибка: {error_msg}")
+
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+# Footer
+st.markdown("---")
+st.markdown("<p style='text-align: center; color: #999; font-size: 0.875rem;'>Creative Analysis Pipeline</p>", unsafe_allow_html=True)
