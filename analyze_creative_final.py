@@ -254,8 +254,8 @@ def group_and_classify_text_zones(text_blocks, img_width, img_height):
 # ============================================================================
 
 def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_height):
-    """Detect visual elements and missing text zones using GPT-4.1"""
-    print("  Detecting elements with GPT-4.1 (visual + text fallback)...")
+    """Detect visual elements and missing text zones using GPT-5.2 with reasoning"""
+    print("  Detecting elements with GPT-5.2 + reasoning...")
 
     with open(image_path, 'rb') as f:
         base64_image = base64.b64encode(f.read()).decode('utf-8')
@@ -309,8 +309,12 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
 ]"""
 
     payload = {
-        'model': 'gpt-4.1',
+        'model': 'gpt-5.2',
         'messages': [
+            {
+                'role': 'system',
+                'content': 'Ты эксперт по анализу рекламных креативов. Твоя задача — точно определить координаты элементов на изображении. Будь внимателен к деталям и давай ТОЧНЫЕ пиксельные координаты.'
+            },
             {
                 'role': 'user',
                 'content': [
@@ -324,7 +328,8 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
                 ]
             }
         ],
-        'max_tokens': 1000
+        'max_completion_tokens': 2000,
+        'reasoning_effort': 'medium'
     }
 
     response = requests.post(
@@ -334,11 +339,11 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
             'Authorization': f'Bearer {API_KEY}'
         },
         json=payload,
-        timeout=60
+        timeout=120  # Longer timeout for reasoning
     )
 
     if response.status_code != 200:
-        print(f"  ⚠️  GPT-4.1 error: {response.status_code}")
+        print(f"  ⚠️  GPT-5.2 error: {response.status_code} - {response.text}")
         return []
 
     result = response.json()
