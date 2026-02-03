@@ -746,105 +746,95 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
 # ============================================================================
 
 def create_visualization(image_path, zones, output_path):
-    """Create visualization with bounding boxes and smart label placement"""
+    """Create clean visualization with legend panel"""
     print("  Creating visualization...")
 
     img = Image.open(image_path)
     img_width, img_height = img.size
-    draw = ImageDraw.Draw(img)
+    
+    # Create extended canvas with legend panel on the right
+    legend_width = 180
+    new_width = img_width + legend_width
+    new_img = Image.new('RGB', (new_width, img_height), (255, 255, 255))
+    new_img.paste(img, (0, 0))
+    
+    draw = ImageDraw.Draw(new_img)
 
     try:
-        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12)
+        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 11)
+        font_title = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 13)
     except:
         font_small = ImageFont.load_default()
+        font_title = font_small
 
     colors = {
         'logo': (255, 200, 0),       # Yellow
-        'header': (0, 200, 100),     # Green
-        'subheader': (255, 120, 0),  # Orange
-        'cta': (100, 150, 255),      # Blue
-        'product': (200, 100, 255),  # Purple
+        'header': (0, 180, 80),      # Green
+        'subheader': (255, 140, 0),  # Orange
+        'cta': (80, 130, 255),       # Blue
+        'product': (180, 80, 255),   # Purple
         'person': (255, 100, 150),   # Pink
-        'slogan': (100, 200, 200),   # Cyan
+        'slogan': (80, 180, 180),    # Cyan
         'description': (150, 150, 150),
-        'legal': (100, 100, 100),
+        'legal': (120, 120, 120),
         'visual': (255, 100, 150)
     }
 
-    # Track used label positions to avoid overlaps
-    used_label_rects = []
-    
-    def find_label_position(x, y, w, h, label_width, label_height):
-        """Find best position for label that doesn't overlap with others"""
-        padding = 4
-        
-        # Possible positions: top-left outside, top-left inside, bottom-left inside, bottom-left outside
-        positions = [
-            (x, y - label_height - padding, "top-outside"),      # Above box
-            (x, y + padding, "top-inside"),                       # Inside top
-            (x, y + h - label_height - padding, "bottom-inside"), # Inside bottom  
-            (x, y + h + padding, "bottom-outside"),               # Below box
-        ]
-        
-        for px, py, pos_type in positions:
-            # Ensure within image bounds
-            px = max(0, min(px, img_width - label_width))
-            py = max(0, min(py, img_height - label_height))
-            
-            candidate_rect = (px, py, px + label_width, py + label_height)
-            
-            # Check for overlaps with existing labels
-            has_overlap = False
-            for used_rect in used_label_rects:
-                if rects_overlap(candidate_rect, used_rect):
-                    has_overlap = True
-                    break
-            
-            if not has_overlap:
-                return px, py
-        
-        # Fallback: just use inside top, offset slightly
-        offset = len(used_label_rects) * 18
-        return x + 2, y + 2 + offset
-    
-    def rects_overlap(r1, r2):
-        """Check if two rectangles overlap"""
-        return not (r1[2] < r2[0] or r1[0] > r2[2] or r1[3] < r2[1] or r1[1] > r2[3])
+    # Sort zones by attention (highest first)
+    zones_sorted = sorted(zones, key=lambda z: z.get('attention_pct', 0), reverse=True)
 
-    # Sort zones by size (larger first) for better label placement
-    zones_sorted = sorted(zones, key=lambda z: z['bbox'][2] * z['bbox'][3], reverse=True)
+    # Draw legend panel header
+    legend_x = img_width + 10
+    legend_y = 15
+    draw.text((legend_x, legend_y), "Зоны внимания", fill=(0, 0, 0), font=font_title)
+    legend_y += 25
 
-    for zone in zones_sorted:
+    # Draw zones on image (just thin borders, no labels)
+    for i, zone in enumerate(zones_sorted):
         zone_type = zone['type']
         attention = zone.get('attention_pct', 0)
         x, y, w, h = zone['bbox']
+        color = colors.get(zone_type, (200, 200, 200))
 
-        color = colors.get(zone_type, (255, 255, 255))
-
-        # Draw rectangle with rounded corners effect (thinner line)
+        # Draw thin rectangle border
         draw.rectangle([x, y, x+w, y+h], outline=color, width=2)
-
-        # Create compact label
-        label_text = f"{zone_type}: {attention:.1f}%"
-        text_bbox = draw.textbbox((0, 0), label_text, font=font_small)
-        label_width = text_bbox[2] - text_bbox[0] + 8
-        label_height = text_bbox[3] - text_bbox[1] + 6
         
-        # Find non-overlapping position
-        label_x, label_y = find_label_position(x, y, w, h, label_width, label_height)
+        # Draw small number badge in corner
+        badge_size = 16
+        badge_x = x + 2
+        badge_y = y + 2
+        draw.ellipse([badge_x, badge_y, badge_x + badge_size, badge_y + badge_size], fill=color, outline=(255,255,255))
         
-        # Draw label background with slight transparency effect (darker outline)
-        label_rect = (label_x, label_y, label_x + label_width, label_y + label_height)
-        draw.rectangle(label_rect, fill=color, outline=(0, 0, 0), width=1)
-        draw.text((label_x + 4, label_y + 2), label_text, fill=(0, 0, 0), font=font_small)
+        # Number text (centered in badge)
+        num_text = str(i + 1)
+        num_bbox = draw.textbbox((0, 0), num_text, font=font_small)
+        num_w = num_bbox[2] - num_bbox[0]
+        num_h = num_bbox[3] - num_bbox[1]
+        draw.text((badge_x + (badge_size - num_w) // 2, badge_y + (badge_size - num_h) // 2 - 1), 
+                  num_text, fill=(0, 0, 0), font=font_small)
+
+        # Add to legend
+        # Color square
+        draw.rectangle([legend_x, legend_y, legend_x + 12, legend_y + 12], fill=color, outline=(100,100,100))
+        # Number
+        draw.text((legend_x + 16, legend_y - 1), f"{i+1}.", fill=(0, 0, 0), font=font_small)
+        # Type and attention
+        legend_text = f"{zone_type} ({attention:.1f}%)"
+        draw.text((legend_x + 32, legend_y - 1), legend_text, fill=(50, 50, 50), font=font_small)
+        legend_y += 20
         
-        # Track this label position
-        used_label_rects.append(label_rect)
+        # Add separator line every 3 items
+        if (i + 1) % 3 == 0 and i < len(zones_sorted) - 1:
+            legend_y += 5
 
-    if img.mode == 'RGBA':
-        img = img.convert('RGB')
+    # Draw total coverage at bottom of legend
+    total_attention = sum(z.get('attention_pct', 0) for z in zones)
+    legend_y += 15
+    draw.line([(legend_x, legend_y), (legend_x + legend_width - 20, legend_y)], fill=(200, 200, 200), width=1)
+    legend_y += 10
+    draw.text((legend_x, legend_y), f"Покрытие: {total_attention:.1f}%", fill=(0, 0, 0), font=font_title)
 
-    img.save(output_path, quality=95)
+    new_img.save(output_path, quality=95)
     print(f"  ✅ Saved visualization to: {output_path}")
 
 def save_heatmap(image_path, saliency_map, output_path):
