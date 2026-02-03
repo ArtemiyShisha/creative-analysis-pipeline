@@ -275,15 +275,19 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
 **Типы элементов:**
 
 ВИЗУАЛЬНЫЕ:
-- "logo" — логотип бренда (обычно маленький, в углу)
+- "logo" — логотип/название бренда (обычно маленький, в углу, это НЕ оффер)
 - "product" — изображение продукта/товара/скриншот приложения (НЕ человек!)
 - "person" — человек, лицо, персона (включи всё тело/лицо целиком)
 
 ТЕКСТОВЫЕ:
-- "header" — ГЛАВНЫЙ заголовок, самый крупный текст с основным оффером/сообщением
-- "subheader" — подзаголовок, дополнительная информация (меньше header)
-- "cta" — КНОПКА призыва к действию (прямоугольник с текстом типа "Узнать больше", "Купить")
-- "slogan" — слоган или дополнительный текст-усилитель
+- "header" — ГЛАВНЫЙ ОФФЕР, самый крупный текст с ценностным предложением. Это НЕ название бренда! Примеры: "Ваш комфорт в бухгалтерии", "Скидки до 70%", "Быстрая доставка"
+- "subheader" — подзаголовок с уточнением оффера. Примеры: "Для ИП и ООО", "Только сегодня"
+- "cta" — КНОПКА призыва к действию. Это прямоугольная кнопка! Примеры: "Узнать больше", "Купить", "Заказать"
+- "slogan" — слоган или дополнительный текст-усилитель. Примеры: "Закроем квартал без ошибок"
+
+**ВАЖНО: logo ≠ header!**
+- Logo — это название бренда/компании (например "моё дело", "Яндекс")
+- Header — это оффер/предложение (например "Ваш комфорт в бухгалтерии")
 
 **КРИТИЧЕСКИ ВАЖНО для bbox:**
 - Формат: [x, y, width, height] где x,y — левый верхний угол
@@ -349,11 +353,78 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
 
     try:
         visual_zones = json.loads(text)
-        print(f"  ✅ Found {len(visual_zones)} visual elements")
+        
+        # Post-process: remove duplicates and validate
+        visual_zones = postprocess_zones(visual_zones, img_width, img_height)
+        
+        print(f"  ✅ Found {len(visual_zones)} elements after validation")
         return visual_zones
     except:
         print(f"  ⚠️  Failed to parse GPT-4.1 response")
         return []
+
+
+def postprocess_zones(zones, img_width, img_height):
+    """Validate and clean up detected zones"""
+    
+    def bbox_overlap_pct(bbox1, bbox2):
+        """Calculate overlap percentage between two bboxes"""
+        x1, y1, w1, h1 = bbox1
+        x2, y2, w2, h2 = bbox2
+        
+        x_left = max(x1, x2)
+        y_top = max(y1, y2)
+        x_right = min(x1 + w1, x2 + w2)
+        y_bottom = min(y1 + h1, y2 + h2)
+        
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0
+        
+        intersection = (x_right - x_left) * (y_bottom - y_top)
+        area1 = w1 * h1
+        area2 = w2 * h2
+        
+        return intersection / min(area1, area2) if min(area1, area2) > 0 else 0
+    
+    validated = []
+    
+    for zone in zones:
+        # Skip if no bbox
+        if 'bbox' not in zone or len(zone['bbox']) != 4:
+            continue
+            
+        x, y, w, h = zone['bbox']
+        
+        # Validate bbox is within image bounds
+        x = max(0, min(x, img_width - 1))
+        y = max(0, min(y, img_height - 1))
+        w = max(10, min(w, img_width - x))
+        h = max(10, min(h, img_height - y))
+        
+        zone['bbox'] = [int(x), int(y), int(w), int(h)]
+        
+        # Check for duplicates (same area, different type)
+        is_duplicate = False
+        for existing in validated:
+            overlap = bbox_overlap_pct(zone['bbox'], existing['bbox'])
+            if overlap > 0.7:
+                # If logo and header overlap, keep only logo
+                if zone['type'] == 'header' and existing['type'] == 'logo':
+                    is_duplicate = True
+                    break
+                elif zone['type'] == 'logo' and existing['type'] == 'header':
+                    # Remove existing header, add logo
+                    validated.remove(existing)
+                    break
+                # If same type overlaps, skip duplicate
+                elif zone['type'] == existing['type']:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            validated.append(zone)
+    
+    return validated
 
 # ============================================================================
 # STEP 5: Refine CTA bbox (find button)
