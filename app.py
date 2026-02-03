@@ -331,6 +331,8 @@ if st.button("Анализировать", type="primary", use_container_width=T
         # Check for specific error types
         if "401" in error_msg or "Unauthorized" in error_msg:
             st.error("⚠️ Неверный API ключ OpenAI. Проверьте config.py")
+        elif "insufficient_quota" in error_msg.lower() or "billing" in error_msg.lower():
+            st.error("⚠️ Недостаточно средств на балансе OpenAI. Пополните баланс на platform.openai.com")
         elif "429" in error_msg or "rate limit" in error_msg.lower():
             st.error("⚠️ Превышен лимит запросов. Попробуйте позже")
         elif "api" in error_msg.lower() or "openai" in error_msg.lower():
