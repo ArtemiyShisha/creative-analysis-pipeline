@@ -254,8 +254,8 @@ def group_and_classify_text_zones(text_blocks, img_width, img_height):
 # ============================================================================
 
 def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_height):
-    """Detect visual elements (logo, product) using GPT-4.1"""
-    print("  Detecting visual elements with GPT-4.1...")
+    """Detect visual elements and missing text zones using GPT-4.1"""
+    print("  Detecting elements with GPT-4.1 (visual + text fallback)...")
 
     with open(image_path, 'rb') as f:
         base64_image = base64.b64encode(f.read()).decode('utf-8')
@@ -265,26 +265,38 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
     # Describe existing zones to avoid duplication
     existing_desc = "\n".join([f"- {z['type']}: {z['bbox']}" for z in existing_zones])
 
-    prompt = f"""Проанализируй рекламный креатив и найди ТОЛЬКО визуальные элементы.
+    prompt = f"""Проанализируй рекламный креатив и найди ключевые элементы.
 
 Размер изображения: {img_width}x{img_height} пикселей
 
-УЖЕ НАЙДЕННЫЕ текстовые зоны (НЕ детектируй их повторно):
-{existing_desc}
+УЖЕ НАЙДЕННЫЕ зоны (НЕ детектируй их повторно):
+{existing_desc if existing_desc else "(пока ничего не найдено)"}
 
-Найди ТОЛЬКО:
-1. "logo" - логотип бренда (иконка, небольшое изображение с названием)
-2. "product" - изображение продукта/приложения/товара
+**Найди следующие элементы:**
 
-ВАЖНО:
-- bbox формат: [x, y, width, height]
-- НЕ включай текстовые элементы
-- НЕ включай декоративные элементы (фоновые фигуры, лучи)
+ВИЗУАЛЬНЫЕ:
+- "logo" — логотип бренда
+- "product" — изображение продукта/товара/приложения (НЕ человек!)
+- "person" — человек, лицо, персона (модель, представитель бренда)
 
-Верни ТОЛЬКО JSON массив (2-3 элемента максимум):
+ТЕКСТОВЫЕ (только если НЕ найдены выше):
+- "header" — главный заголовок/оффер
+- "subheader" — подзаголовок, уточнение
+- "cta" — кнопка призыва к действию
+- "slogan" — слоган, дополнительный текст-усилитель
+
+**ВАЖНО:**
+- bbox формат: [x, y, width, height] в пикселях
+- Человек/лицо — это "person", НЕ "product"
+- Декоративные элементы (фон, лучи, градиенты) — НЕ включай
+- Найди ВСЕ значимые элементы, не только 2-3
+
+Верни ТОЛЬКО JSON массив:
 [
-  {{"type": "logo", "label": "название бренда", "bbox": [x, y, width, height]}},
-  {{"type": "product", "label": "описание продукта", "bbox": [x, y, width, height]}}
+  {{"type": "logo", "label": "описание", "bbox": [x, y, width, height]}},
+  {{"type": "person", "label": "описание", "bbox": [x, y, width, height]}},
+  {{"type": "header", "label": "текст заголовка", "bbox": [x, y, width, height]}},
+  ...
 ]"""
 
     payload = {
@@ -665,11 +677,13 @@ def create_visualization(image_path, zones, output_path):
         font_small = ImageFont.load_default()
 
     colors = {
-        'logo': (255, 200, 0),
-        'header': (0, 200, 100),
-        'subheader': (255, 120, 0),
-        'cta': (100, 150, 255),
-        'product': (200, 100, 255),
+        'logo': (255, 200, 0),       # Yellow
+        'header': (0, 200, 100),     # Green
+        'subheader': (255, 120, 0),  # Orange
+        'cta': (100, 150, 255),      # Blue
+        'product': (200, 100, 255),  # Purple
+        'person': (255, 100, 150),   # Pink - для людей/лиц
+        'slogan': (100, 200, 200),   # Cyan - для слоганов
         'description': (150, 150, 150),
         'legal': (100, 100, 100),
         'visual': (255, 100, 150)
