@@ -741,14 +741,15 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
 # ============================================================================
 
 def create_visualization(image_path, zones, output_path):
-    """Create visualization with bounding boxes"""
+    """Create visualization with bounding boxes and smart label placement"""
     print("  Creating visualization...")
 
     img = Image.open(image_path)
+    img_width, img_height = img.size
     draw = ImageDraw.Draw(img)
 
     try:
-        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12)
     except:
         font_small = ImageFont.load_default()
 
@@ -758,30 +759,82 @@ def create_visualization(image_path, zones, output_path):
         'subheader': (255, 120, 0),  # Orange
         'cta': (100, 150, 255),      # Blue
         'product': (200, 100, 255),  # Purple
-        'person': (255, 100, 150),   # Pink - для людей/лиц
-        'slogan': (100, 200, 200),   # Cyan - для слоганов
+        'person': (255, 100, 150),   # Pink
+        'slogan': (100, 200, 200),   # Cyan
         'description': (150, 150, 150),
         'legal': (100, 100, 100),
         'visual': (255, 100, 150)
     }
 
-    for zone in zones:
+    # Track used label positions to avoid overlaps
+    used_label_rects = []
+    
+    def find_label_position(x, y, w, h, label_width, label_height):
+        """Find best position for label that doesn't overlap with others"""
+        padding = 4
+        
+        # Possible positions: top-left outside, top-left inside, bottom-left inside, bottom-left outside
+        positions = [
+            (x, y - label_height - padding, "top-outside"),      # Above box
+            (x, y + padding, "top-inside"),                       # Inside top
+            (x, y + h - label_height - padding, "bottom-inside"), # Inside bottom  
+            (x, y + h + padding, "bottom-outside"),               # Below box
+        ]
+        
+        for px, py, pos_type in positions:
+            # Ensure within image bounds
+            px = max(0, min(px, img_width - label_width))
+            py = max(0, min(py, img_height - label_height))
+            
+            candidate_rect = (px, py, px + label_width, py + label_height)
+            
+            # Check for overlaps with existing labels
+            has_overlap = False
+            for used_rect in used_label_rects:
+                if rects_overlap(candidate_rect, used_rect):
+                    has_overlap = True
+                    break
+            
+            if not has_overlap:
+                return px, py
+        
+        # Fallback: just use inside top, offset slightly
+        offset = len(used_label_rects) * 18
+        return x + 2, y + 2 + offset
+    
+    def rects_overlap(r1, r2):
+        """Check if two rectangles overlap"""
+        return not (r1[2] < r2[0] or r1[0] > r2[2] or r1[3] < r2[1] or r1[1] > r2[3])
+
+    # Sort zones by size (larger first) for better label placement
+    zones_sorted = sorted(zones, key=lambda z: z['bbox'][2] * z['bbox'][3], reverse=True)
+
+    for zone in zones_sorted:
         zone_type = zone['type']
         attention = zone.get('attention_pct', 0)
         x, y, w, h = zone['bbox']
 
         color = colors.get(zone_type, (255, 255, 255))
 
-        # Draw rectangle
-        draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+        # Draw rectangle with rounded corners effect (thinner line)
+        draw.rectangle([x, y, x+w, y+h], outline=color, width=2)
 
-        # Draw label
+        # Create compact label
         label_text = f"{zone_type}: {attention:.1f}%"
-        text_bbox = draw.textbbox((x+3, y-22), label_text, font=font_small)
-        text_bbox = (text_bbox[0]-3, text_bbox[1]-2, text_bbox[2]+3, text_bbox[3]+2)
-
-        draw.rectangle(text_bbox, fill=color)
-        draw.text((x+3, y-22), label_text, fill=(0, 0, 0), font=font_small)
+        text_bbox = draw.textbbox((0, 0), label_text, font=font_small)
+        label_width = text_bbox[2] - text_bbox[0] + 8
+        label_height = text_bbox[3] - text_bbox[1] + 6
+        
+        # Find non-overlapping position
+        label_x, label_y = find_label_position(x, y, w, h, label_width, label_height)
+        
+        # Draw label background with slight transparency effect (darker outline)
+        label_rect = (label_x, label_y, label_x + label_width, label_y + label_height)
+        draw.rectangle(label_rect, fill=color, outline=(0, 0, 0), width=1)
+        draw.text((label_x + 4, label_y + 2), label_text, fill=(0, 0, 0), font=font_small)
+        
+        # Track this label position
+        used_label_rects.append(label_rect)
 
     if img.mode == 'RGBA':
         img = img.convert('RGB')
