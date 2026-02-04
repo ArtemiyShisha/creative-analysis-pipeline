@@ -66,17 +66,37 @@ def generate_saliency_map(image_path):
 # ============================================================================
 
 def detect_text_blocks(image_path):
-    """Detect text blocks using EasyOCR"""
+    """Detect text blocks using EasyOCR with preprocessing"""
     print("  Detecting text blocks with EasyOCR...")
 
     reader = easyocr.Reader(['ru', 'en'], gpu=False, verbose=False)
     img = Image.open(image_path)
     img_array = np.array(img)
-
-    results = reader.readtext(img_array)
-
+    
+    # Preprocess image for better OCR on bright/colored backgrounds
+    # Convert to grayscale and enhance contrast
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    
+    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    
+    # Try OCR on both original and enhanced images
+    results_original = reader.readtext(img_array)
+    results_enhanced = reader.readtext(enhanced)
+    
+    # Merge results, preferring higher confidence
+    all_results = {}
+    
+    for bbox, text, conf in results_original + results_enhanced:
+        text_clean = text.strip()
+        if text_clean and len(text_clean) >= 2:
+            # Use text as key, keep highest confidence
+            if text_clean not in all_results or conf > all_results[text_clean][1]:
+                all_results[text_clean] = (bbox, conf)
+    
     text_blocks = []
-    for bbox, text, conf in results:
+    for text, (bbox, conf) in all_results.items():
         # Get bounding box coordinates
         x_coords = [point[0] for point in bbox]
         y_coords = [point[1] for point in bbox]
@@ -86,15 +106,16 @@ def detect_text_blocks(image_path):
         w = int(max(x_coords) - x)
         h = int(max(y_coords) - y)
 
-        # Skip low confidence or very small text
-        if conf < 0.3 or len(text.strip()) < 2:
+        # Lower threshold for more coverage
+        if conf < 0.2 or len(text) < 2:
             continue
 
         text_blocks.append({
-            'text': text.strip(),
+            'text': text,
             'bbox': [x, y, w, h],
             'confidence': float(conf)
         })
+        print(f"    OCR: '{text}' (conf: {conf:.2f})")
 
     print(f"  ✅ Found {len(text_blocks)} text blocks")
     return text_blocks
@@ -265,46 +286,62 @@ def detect_visual_elements_gpt41(image_path, existing_zones, img_width, img_heig
     # Describe existing zones to avoid duplication
     existing_desc = "\n".join([f"- {z['type']}: {z['bbox']}" for z in existing_zones])
 
-    prompt = f"""Проанализируй рекламный креатив и найди ключевые элементы с ТОЧНЫМИ координатами.
+    # Check if we have text zones from OCR
+    has_text_zones = any(z['type'] in ['header', 'subheader', 'cta', 'slogan', 'description'] for z in existing_zones)
+    
+    if has_text_zones:
+        # OCR found text - GPT only needs to find visual elements
+        prompt = f"""Найди ТОЛЬКО ВИЗУАЛЬНЫЕ элементы на рекламном креативе.
 
 Размер изображения: {img_width}x{img_height} пикселей
 
-УЖЕ НАЙДЕННЫЕ зоны (НЕ детектируй их повторно):
-{existing_desc if existing_desc else "(пока ничего не найдено)"}
+Текстовые элементы УЖЕ НАЙДЕНЫ, не детектируй их:
+{existing_desc}
+
+**Найди ТОЛЬКО:**
+- "logo" — логотип бренда (маленький, обычно в углу)
+- "person" — человек/лицо на изображении (обведи ТОЛЬКО лицо или фигуру, НЕ захватывай текст!)
+- "product" — изображение продукта/товара (НЕ человек)
+
+**КРИТИЧЕСКИ ВАЖНО для person:**
+- Обводи ТОЛЬКО человека/лицо
+- НЕ включай текст в bbox человека
+- Если человек частично за текстом — обведи только видимую часть человека
+
+**Формат bbox:** [x, y, width, height] в пикселях
+
+Верни ТОЛЬКО JSON массив:
+[
+  {{"type": "person", "label": "описание", "bbox": [x, y, width, height]}},
+  {{"type": "logo", "label": "название", "bbox": [x, y, width, height]}}
+]"""
+    else:
+        # No OCR text - GPT needs to find everything
+        prompt = f"""Найди ВСЕ ключевые элементы на рекламном креативе.
+
+Размер изображения: {img_width}x{img_height} пикселей
 
 **Типы элементов:**
 
 ВИЗУАЛЬНЫЕ:
-- "logo" — логотип/название бренда (обычно маленький, в углу, это НЕ оффер)
-- "product" — изображение продукта/товара/скриншот приложения (НЕ человек!)
-- "person" — человек, лицо, персона (включи всё тело/лицо целиком)
+- "logo" — логотип бренда (маленький, в углу)
+- "person" — человек/лицо (обведи ТОЛЬКО человека, не текст вокруг!)
+- "product" — изображение продукта (НЕ человек)
 
 ТЕКСТОВЫЕ:
-- "header" — ГЛАВНЫЙ ОФФЕР, самый крупный текст с ценностным предложением. Это НЕ название бренда! Примеры: "Ваш комфорт в бухгалтерии", "Скидки до 70%", "Быстрая доставка"
-- "subheader" — подзаголовок с уточнением оффера. Примеры: "Для ИП и ООО", "Только сегодня"
-- "cta" — КНОПКА призыва к действию. Это прямоугольная кнопка! Примеры: "Узнать больше", "Купить", "Заказать"
-- "slogan" — слоган или дополнительный текст-усилитель. Примеры: "Закроем квартал без ошибок"
+- "header" — главный заголовок/оффер (самый крупный текст)
+- "subheader" — подзаголовок
+- "cta" — кнопка призыва к действию (прямоугольник с текстом)
+- "slogan" — слоган, дополнительный текст
 
-**ВАЖНО: logo ≠ header!**
-- Logo — это название бренда/компании (например "моё дело", "Яндекс")
-- Header — это оффер/предложение (например "Ваш комфорт в бухгалтерии")
-
-**КРИТИЧЕСКИ ВАЖНО для bbox:**
-- Формат: [x, y, width, height] где x,y — левый верхний угол
-- Координаты в ПИКСЕЛЯХ (0 до {img_width} по X, 0 до {img_height} по Y)
-- bbox должен ТОЧНО обрамлять элемент, не больше и не меньше
-- Для текста: bbox должен включать ВЕСЬ текст элемента (все строки если многострочный)
-- Для кнопки (cta): bbox должен включать саму кнопку целиком, а не только текст
-
-**Примеры правильных bbox:**
-- Логотип в левом верхнем углу: [20, 20, 150, 50]
-- Заголовок из 2 строк в центре: [100, 200, 400, 120]
-- Кнопка внизу слева: [50, 500, 200, 50]
+**Формат bbox:** [x, y, width, height] в пикселях
+- x, y — левый верхний угол
+- bbox должен ТОЧНО обрамлять элемент
 
 Верни ТОЛЬКО JSON массив:
 [
-  {{"type": "logo", "label": "текст/описание", "bbox": [x, y, width, height]}},
-  {{"type": "header", "label": "полный текст заголовка", "bbox": [x, y, width, height]}},
+  {{"type": "header", "label": "текст", "bbox": [x, y, width, height]}},
+  {{"type": "person", "label": "описание", "bbox": [x, y, width, height]}},
   ...
 ]"""
 
