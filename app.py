@@ -269,23 +269,12 @@ if st.button("Анализировать", type="primary", use_container_width=T
         st.markdown("### Распределение внимания")
         st.dataframe(zones_df, use_container_width=True, hide_index=True)
 
-        # Heatmap and visualization side by side
-        st.markdown("### Визуализация")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("**Тепловая карта**")
-            if os.path.exists(heatmap_path):
-                st.image(heatmap_path, use_container_width=True)
-            else:
-                st.warning("Тепловая карта не найдена")
-
-        with col2:
-            st.markdown("**Разметка зон**")
-            if os.path.exists(viz_path):
-                st.image(viz_path, use_container_width=True)
-            else:
-                st.warning("Разметка не найдена")
+        # Heatmap visualization
+        st.markdown("### Тепловая карта внимания")
+        if os.path.exists(heatmap_path):
+            st.image(heatmap_path, use_container_width=True)
+        else:
+            st.warning("Тепловая карта не найдена")
 
         # Recommendations
         with st.expander("Рекомендации", expanded=True):
@@ -293,7 +282,7 @@ if st.button("Анализировать", type="primary", use_container_width=T
 
         # Download buttons
         st.markdown("### Скачать результаты")
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
             if os.path.exists(json_path):
@@ -312,16 +301,6 @@ if st.button("Анализировать", type="primary", use_container_width=T
                         label="Тепловая карта",
                         data=f,
                         file_name=heatmap_path,
-                        mime="image/jpeg"
-                    )
-
-        with col3:
-            if os.path.exists(viz_path):
-                with open(viz_path, "rb") as f:
-                    st.download_button(
-                        label="Разметка зон",
-                        data=f,
-                        file_name=viz_path,
                         mime="image/jpeg"
                     )
 
