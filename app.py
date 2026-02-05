@@ -31,7 +31,7 @@ def generate_pdf_report(results, heatmap_path):
         ax1.axis('off')
         
         score = results.get('overall_score', 0)
-        stars = '★' * int(score) + '☆' * (5 - int(score))
+        stars = '*' * int(score) + '-' * (5 - int(score))
         
         text_content = f"Общая оценка: {stars} {score}/5.0\n\n"
         text_content += results.get('reasoning', '')[:500]
@@ -86,11 +86,11 @@ def generate_pdf_report(results, heatmap_path):
         
         recs = results.get('recommendations', [])[:5]
         rec_text = ""
-        priority_emoji = {'High': '🔴', 'Medium': '🟡', 'Low': '🟢'}
+        priority_label = {'High': '[ВЫСОКИЙ]', 'Medium': '[СРЕДНИЙ]', 'Low': '[НИЗКИЙ]'}
         
         for i, rec in enumerate(recs, 1):
-            emoji = priority_emoji.get(rec.get('priority', 'Medium'), '⚪')
-            rec_text += f"{i}. {emoji} {rec.get('title', '')}\n"
+            priority = priority_label.get(rec.get('priority', 'Medium'), '[СРЕДНИЙ]')
+            rec_text += f"{i}. {priority} {rec.get('title', '')}\n"
             rec_text += f"   {rec.get('description', '')[:200]}\n"
             rec_text += f"   → {rec.get('expected_impact', '')[:100]}\n\n"
         
