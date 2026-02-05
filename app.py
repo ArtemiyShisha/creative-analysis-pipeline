@@ -95,7 +95,11 @@ def generate_pdf_report(results, heatmap_path):
 
 
 def transliterate_text(text):
-    """Simple transliteration for non-Unicode fonts"""
+    """Transliterate and clean text for PDF (ASCII-safe)"""
+    if not text:
+        return ''
+    
+    # Cyrillic transliteration
     translit_map = {
         'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
         'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
@@ -108,7 +112,28 @@ def transliterate_text(text):
         'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch',
         'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
     }
-    return ''.join(translit_map.get(c, c) for c in text)
+    
+    # Special characters replacement
+    special_chars = {
+        '—': '-', '–': '-', '«': '"', '»': '"', '"': '"', '"': '"',
+        ''': "'", ''': "'", '…': '...', '№': 'N', '•': '*', '→': '->',
+        '←': '<-', '↓': 'v', '↑': '^', '≤': '<=', '≥': '>=', '≠': '!=',
+        '×': 'x', '÷': '/', '±': '+/-', '°': ' deg', '€': 'EUR', '£': 'GBP',
+        '¥': 'JPY', '₽': 'RUB', '™': 'TM', '©': '(c)', '®': '(R)'
+    }
+    
+    result = []
+    for c in text:
+        if c in translit_map:
+            result.append(translit_map[c])
+        elif c in special_chars:
+            result.append(special_chars[c])
+        elif ord(c) < 128:  # ASCII
+            result.append(c)
+        else:
+            result.append(' ')  # Replace unknown chars with space
+    
+    return ''.join(result)
 
 # Page config
 st.set_page_config(
