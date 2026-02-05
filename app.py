@@ -7,133 +7,101 @@ Then open the URL shown in terminal (usually http://localhost:8501)
 
 import os
 import io
+import json
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from matplotlib.backends.backend_pdf import PdfPages
 from analyze_creative_final import analyze_creative_final
 
 
 def generate_pdf_report(results, heatmap_path):
-    """Generate simple PDF report with analysis results"""
+    """Generate PDF report using matplotlib (supports Unicode)"""
     
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+    pdf_buffer = io.BytesIO()
     
-    # Use built-in font only (no Unicode issues)
-    pdf.set_font('helvetica', 'B', 18)
-    pdf.cell(0, 12, 'Creative Analysis Report', ln=True, align='C')
-    pdf.ln(8)
-    
-    # Overall Score
-    score = results.get('overall_score', 0)
-    pdf.set_font('helvetica', 'B', 14)
-    pdf.cell(0, 8, f'Score: {score}/5.0', ln=True)
-    pdf.ln(4)
-    
-    # Reasoning (transliterated)
-    pdf.set_font('helvetica', '', 10)
-    reasoning = transliterate_text(results.get('reasoning', '')[:400])
-    pdf.multi_cell(0, 5, reasoning)
-    pdf.ln(6)
-    
-    # Attention Distribution (simple list, no table)
-    pdf.set_font('helvetica', 'B', 12)
-    pdf.cell(0, 8, 'Attention Distribution:', ln=True)
-    pdf.ln(2)
-    
-    pdf.set_font('helvetica', '', 10)
-    for zone in results.get('zones', [])[:10]:
-        zone_type = zone.get('type', 'unknown')
-        attention = zone.get('attention_pct', 0)
-        label = transliterate_text(zone.get('label', '')[:40])
-        line = f"  - {zone_type}: {attention:.1f}% ({label})"
-        pdf.cell(0, 6, line, ln=True)
-    
-    pdf.ln(2)
-    total = results.get('total_zones_attention', 0)
-    pdf.set_font('helvetica', 'B', 10)
-    pdf.cell(0, 6, f'Total coverage: {total:.1f}%', ln=True)
-    pdf.ln(6)
-    
-    # Heatmap image
-    if os.path.exists(heatmap_path):
-        pdf.set_font('helvetica', 'B', 12)
-        pdf.cell(0, 8, 'Attention Heatmap:', ln=True)
-        pdf.ln(2)
-        try:
-            pdf.image(heatmap_path, x=15, w=180)
-        except Exception:
-            pdf.cell(0, 6, '(Image not available)', ln=True)
-        pdf.ln(4)
-    
-    # Recommendations
-    pdf.add_page()
-    pdf.set_font('helvetica', 'B', 14)
-    pdf.cell(0, 10, 'Recommendations', ln=True)
-    pdf.ln(4)
-    
-    for i, rec in enumerate(results.get('recommendations', [])[:5], 1):
-        priority = rec.get('priority', 'Medium')
-        title = transliterate_text(rec.get('title', '')[:80])
-        desc = transliterate_text(rec.get('description', '')[:300])
-        impact = transliterate_text(rec.get('expected_impact', '')[:150])
+    with PdfPages(pdf_buffer) as pdf:
+        # Page 1: Score, Reasoning, Attention Table
+        fig, axes = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'height_ratios': [1, 2]})
+        fig.suptitle('Анализ креатива', fontsize=18, fontweight='bold', y=0.98)
         
-        pdf.set_font('helvetica', 'B', 10)
-        pdf.multi_cell(0, 5, f"{i}. [{priority}] {title}")
+        # Top section: Score and reasoning
+        ax1 = axes[0]
+        ax1.axis('off')
         
-        pdf.set_font('helvetica', '', 9)
-        pdf.multi_cell(0, 4, desc)
+        score = results.get('overall_score', 0)
+        stars = '★' * int(score) + '☆' * (5 - int(score))
         
-        if impact:
-            pdf.set_font('helvetica', 'I', 8)
-            pdf.multi_cell(0, 4, f"Impact: {impact}")
+        text_content = f"Общая оценка: {stars} {score}/5.0\n\n"
+        text_content += results.get('reasoning', '')[:500]
         
-        pdf.ln(3)
+        ax1.text(0.05, 0.95, text_content, transform=ax1.transAxes, fontsize=10,
+                verticalalignment='top', wrap=True,
+                bbox=dict(boxstyle='round', facecolor='#f0f0f0', alpha=0.8))
+        
+        # Bottom section: Attention table
+        ax2 = axes[1]
+        ax2.axis('off')
+        ax2.set_title('Распределение внимания', fontsize=12, fontweight='bold', loc='left', pad=10)
+        
+        zones = results.get('zones', [])[:8]
+        if zones:
+            table_data = [[z.get('type', ''), z.get('label', '')[:35], f"{z.get('attention_pct', 0):.1f}%"] for z in zones]
+            table = ax2.table(cellText=table_data,
+                            colLabels=['Тип', 'Текст', 'Внимание'],
+                            loc='upper center',
+                            cellLoc='left',
+                            colWidths=[0.2, 0.55, 0.15])
+            table.auto_set_font_size(False)
+            table.set_fontsize(9)
+            table.scale(1, 1.5)
+            
+            # Style header
+            for i in range(3):
+                table[(0, i)].set_facecolor('#e0e0e0')
+                table[(0, i)].set_text_props(fontweight='bold')
+        
+        total = results.get('total_zones_attention', 0)
+        ax2.text(0.05, 0.05, f"Общее покрытие: {total:.1f}%", transform=ax2.transAxes, fontsize=10, fontweight='bold')
+        
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Page 2: Heatmap
+        if os.path.exists(heatmap_path):
+            fig2, ax = plt.subplots(figsize=(8.5, 11))
+            ax.set_title('Тепловая карта внимания', fontsize=14, fontweight='bold', pad=20)
+            img = mpimg.imread(heatmap_path)
+            ax.imshow(img)
+            ax.axis('off')
+            pdf.savefig(fig2, bbox_inches='tight')
+            plt.close(fig2)
+        
+        # Page 3: Recommendations
+        fig3, ax = plt.subplots(figsize=(8.5, 11))
+        ax.axis('off')
+        ax.set_title('Рекомендации', fontsize=14, fontweight='bold', loc='left', y=1.02)
+        
+        recs = results.get('recommendations', [])[:5]
+        rec_text = ""
+        priority_emoji = {'High': '🔴', 'Medium': '🟡', 'Low': '🟢'}
+        
+        for i, rec in enumerate(recs, 1):
+            emoji = priority_emoji.get(rec.get('priority', 'Medium'), '⚪')
+            rec_text += f"{i}. {emoji} {rec.get('title', '')}\n"
+            rec_text += f"   {rec.get('description', '')[:200]}\n"
+            rec_text += f"   → {rec.get('expected_impact', '')[:100]}\n\n"
+        
+        ax.text(0.02, 0.98, rec_text, transform=ax.transAxes, fontsize=9,
+               verticalalignment='top', wrap=True, family='sans-serif')
+        
+        pdf.savefig(fig3, bbox_inches='tight')
+        plt.close(fig3)
     
-    return bytes(pdf.output())
-
-
-def transliterate_text(text):
-    """Transliterate and clean text for PDF (ASCII-safe)"""
-    if not text:
-        return ''
-    
-    # Cyrillic transliteration
-    translit_map = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
-        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
-        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
-        'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
-        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
-        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
-        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
-        'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch',
-        'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
-    }
-    
-    # Special characters replacement
-    special_chars = {
-        '—': '-', '–': '-', '«': '"', '»': '"', '"': '"', '"': '"',
-        ''': "'", ''': "'", '…': '...', '№': 'N', '•': '*', '→': '->',
-        '←': '<-', '↓': 'v', '↑': '^', '≤': '<=', '≥': '>=', '≠': '!=',
-        '×': 'x', '÷': '/', '±': '+/-', '°': ' deg', '€': 'EUR', '£': 'GBP',
-        '¥': 'JPY', '₽': 'RUB', '™': 'TM', '©': '(c)', '®': '(R)'
-    }
-    
-    result = []
-    for c in text:
-        if c in translit_map:
-            result.append(translit_map[c])
-        elif c in special_chars:
-            result.append(special_chars[c])
-        elif ord(c) < 128:  # ASCII
-            result.append(c)
-        else:
-            result.append(' ')  # Replace unknown chars with space
-    
-    return ''.join(result)
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
 
 # Page config
 st.set_page_config(
@@ -406,42 +374,21 @@ if st.button("Анализировать", type="primary", use_container_width=T
             st.markdown(recs_md)
 
         # Download buttons
-        st.markdown("### Скачать результаты")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            # Generate PDF report
-            try:
-                pdf_bytes = generate_pdf_report(results, heatmap_path)
-                pdf_filename = f"{os.path.splitext(os.path.basename(results['image']))[0]}_report.pdf"
-                st.download_button(
-                    label="📄 PDF отчёт",
-                    data=pdf_bytes,
-                    file_name=pdf_filename,
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.warning(f"PDF недоступен: {str(e)[:50]}")
-
-        with col2:
-            if os.path.exists(json_path):
-                with open(json_path, "rb") as f:
-                    st.download_button(
-                        label="JSON",
-                        data=f,
-                        file_name=json_path,
-                        mime="application/json"
-                    )
-
-        with col3:
-            if os.path.exists(heatmap_path):
-                with open(heatmap_path, "rb") as f:
-                    st.download_button(
-                        label="Тепловая карта",
-                        data=f,
-                        file_name=heatmap_path,
-                        mime="image/jpeg"
-                    )
+        st.markdown("### Скачать отчёт")
+        
+        # Generate PDF report
+        try:
+            pdf_bytes = generate_pdf_report(results, heatmap_path)
+            pdf_filename = f"{os.path.splitext(os.path.basename(results['image']))[0]}_report.pdf"
+            st.download_button(
+                label="📄 Скачать PDF отчёт",
+                data=pdf_bytes,
+                file_name=pdf_filename,
+                mime="application/pdf",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Ошибка генерации PDF: {str(e)}")
 
     except Exception as e:
         error_msg = str(e)
