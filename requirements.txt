@@ -22,3 +22,6 @@ requests>=2.31.0
 # Web UI
 streamlit>=1.28.0
 pandas>=2.0.0
+
+# PDF export
+fpdf2>=2.7.0

@@ -6,9 +6,127 @@ Then open the URL shown in terminal (usually http://localhost:8501)
 """
 
 import os
+import io
 import streamlit as st
 import pandas as pd
+from fpdf import FPDF
 from analyze_creative_final import analyze_creative_final
+
+
+def generate_pdf_report(results, heatmap_path):
+    """Generate PDF report with analysis results"""
+    
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Try to add Unicode font for Russian text
+    font_name = 'helvetica'  # fallback
+    try:
+        # Try DejaVu (common on Linux)
+        dejavu_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+        dejavu_bold_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+        if os.path.exists(dejavu_path):
+            pdf.add_font('DejaVu', '', dejavu_path, uni=True)
+            pdf.add_font('DejaVu', 'B', dejavu_bold_path, uni=True)
+            font_name = 'DejaVu'
+    except Exception:
+        pass  # Use fallback font
+    
+    # Title
+    pdf.set_font(font_name, 'B', 20)
+    pdf.cell(0, 15, 'Creative Analysis Report', ln=True, align='C')
+    pdf.ln(5)
+    
+    # Overall Score
+    pdf.set_font(font_name, 'B', 14)
+    score = results['overall_score']
+    pdf.cell(0, 10, f'Score: {score}/5.0', ln=True)
+    
+    pdf.set_font(font_name, '', 11)
+    # Transliterate for fallback font compatibility
+    reasoning = results['reasoning'] if font_name == 'DejaVu' else transliterate_text(results['reasoning'])
+    pdf.multi_cell(0, 6, reasoning)
+    pdf.ln(5)
+    
+    # Attention Distribution Table
+    pdf.set_font(font_name, 'B', 14)
+    pdf.cell(0, 10, 'Attention Distribution', ln=True)
+    
+    pdf.set_font(font_name, 'B', 10)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(50, 8, 'Type', border=1, fill=True)
+    pdf.cell(90, 8, 'Label', border=1, fill=True)
+    pdf.cell(40, 8, 'Attention %', border=1, fill=True, ln=True)
+    
+    pdf.set_font(font_name, '', 10)
+    for zone in results['zones']:
+        label = zone['label'][:35] + ('...' if len(zone['label']) > 35 else '')
+        if font_name != 'DejaVu':
+            label = transliterate_text(label)
+        pdf.cell(50, 7, zone['type'], border=1)
+        pdf.cell(90, 7, label, border=1)
+        pdf.cell(40, 7, f"{zone['attention_pct']:.1f}%", border=1, ln=True)
+    
+    pdf.ln(3)
+    pdf.set_font(font_name, 'B', 10)
+    pdf.cell(0, 8, f"Total coverage: {results['total_zones_attention']:.1f}%", ln=True)
+    pdf.ln(5)
+    
+    # Heatmap
+    if os.path.exists(heatmap_path):
+        pdf.set_font(font_name, 'B', 14)
+        pdf.cell(0, 10, 'Attention Heatmap', ln=True)
+        
+        # Calculate image size to fit page
+        page_width = pdf.w - 40
+        pdf.image(heatmap_path, x=20, w=min(page_width, 170))
+        pdf.ln(5)
+    
+    # Recommendations
+    pdf.add_page()
+    pdf.set_font(font_name, 'B', 14)
+    pdf.cell(0, 10, 'Recommendations', ln=True)
+    
+    priority_labels = {'High': 'HIGH', 'Medium': 'MEDIUM', 'Low': 'LOW'}
+    
+    for i, rec in enumerate(results['recommendations'], 1):
+        priority = priority_labels.get(rec['priority'], rec['priority'])
+        
+        title = rec['title'] if font_name == 'DejaVu' else transliterate_text(rec['title'])
+        desc = rec['description'] if font_name == 'DejaVu' else transliterate_text(rec['description'])
+        impact = rec['expected_impact'] if font_name == 'DejaVu' else transliterate_text(rec['expected_impact'])
+        
+        pdf.set_font(font_name, 'B', 11)
+        pdf.multi_cell(0, 6, f"{i}. [{priority}] {title}")
+        
+        pdf.set_font(font_name, '', 10)
+        pdf.multi_cell(0, 5, desc)
+        
+        pdf.set_font(font_name, '', 9)
+        pdf.set_text_color(100, 100, 100)
+        pdf.multi_cell(0, 5, f"Expected impact: {impact}")
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(3)
+    
+    # Return PDF bytes
+    return bytes(pdf.output())
+
+
+def transliterate_text(text):
+    """Simple transliteration for non-Unicode fonts"""
+    translit_map = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
+        'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch',
+        'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+    }
+    return ''.join(translit_map.get(c, c) for c in text)
 
 # Page config
 st.set_page_config(
@@ -282,9 +400,23 @@ if st.button("Анализировать", type="primary", use_container_width=T
 
         # Download buttons
         st.markdown("### Скачать результаты")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
+            # Generate PDF report
+            try:
+                pdf_bytes = generate_pdf_report(results, heatmap_path)
+                pdf_filename = f"{os.path.splitext(os.path.basename(results['image']))[0]}_report.pdf"
+                st.download_button(
+                    label="📄 PDF отчёт",
+                    data=pdf_bytes,
+                    file_name=pdf_filename,
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.warning(f"PDF недоступен: {str(e)[:50]}")
+
+        with col2:
             if os.path.exists(json_path):
                 with open(json_path, "rb") as f:
                     st.download_button(
@@ -294,7 +426,7 @@ if st.button("Анализировать", type="primary", use_container_width=T
                         mime="application/json"
                     )
 
-        with col2:
+        with col3:
             if os.path.exists(heatmap_path):
                 with open(heatmap_path, "rb") as f:
                     st.download_button(
