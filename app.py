@@ -14,110 +14,83 @@ from analyze_creative_final import analyze_creative_final
 
 
 def generate_pdf_report(results, heatmap_path):
-    """Generate PDF report with analysis results"""
+    """Generate simple PDF report with analysis results"""
     
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
-    # Try to add Unicode font for Russian text
-    font_name = 'helvetica'  # fallback
-    try:
-        # Try DejaVu (common on Linux)
-        dejavu_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-        dejavu_bold_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-        if os.path.exists(dejavu_path):
-            pdf.add_font('DejaVu', '', dejavu_path, uni=True)
-            pdf.add_font('DejaVu', 'B', dejavu_bold_path, uni=True)
-            font_name = 'DejaVu'
-    except Exception:
-        pass  # Use fallback font
-    
-    # Title
-    pdf.set_font(font_name, 'B', 20)
-    pdf.cell(0, 15, 'Creative Analysis Report', ln=True, align='C')
-    pdf.ln(5)
+    # Use built-in font only (no Unicode issues)
+    pdf.set_font('helvetica', 'B', 18)
+    pdf.cell(0, 12, 'Creative Analysis Report', ln=True, align='C')
+    pdf.ln(8)
     
     # Overall Score
-    pdf.set_font(font_name, 'B', 14)
-    score = results['overall_score']
-    pdf.cell(0, 10, f'Score: {score}/5.0', ln=True)
+    score = results.get('overall_score', 0)
+    pdf.set_font('helvetica', 'B', 14)
+    pdf.cell(0, 8, f'Score: {score}/5.0', ln=True)
+    pdf.ln(4)
     
-    pdf.set_font(font_name, '', 10)
-    # Transliterate for fallback font compatibility
-    reasoning = results.get('reasoning', '')[:500]  # Limit length
-    if font_name != 'DejaVu':
-        reasoning = transliterate_text(reasoning)
+    # Reasoning (transliterated)
+    pdf.set_font('helvetica', '', 10)
+    reasoning = transliterate_text(results.get('reasoning', '')[:400])
     pdf.multi_cell(0, 5, reasoning)
-    pdf.ln(5)
+    pdf.ln(6)
     
-    # Attention Distribution Table
-    pdf.set_font(font_name, 'B', 14)
-    pdf.cell(0, 10, 'Attention Distribution', ln=True)
+    # Attention Distribution (simple list, no table)
+    pdf.set_font('helvetica', 'B', 12)
+    pdf.cell(0, 8, 'Attention Distribution:', ln=True)
+    pdf.ln(2)
     
-    pdf.set_font(font_name, 'B', 9)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(35, 8, 'Type', border=1, fill=True)
-    pdf.cell(110, 8, 'Label', border=1, fill=True)
-    pdf.cell(30, 8, 'Attention', border=1, fill=True, ln=True)
+    pdf.set_font('helvetica', '', 10)
+    for zone in results.get('zones', [])[:10]:
+        zone_type = zone.get('type', 'unknown')
+        attention = zone.get('attention_pct', 0)
+        label = transliterate_text(zone.get('label', '')[:40])
+        line = f"  - {zone_type}: {attention:.1f}% ({label})"
+        pdf.cell(0, 6, line, ln=True)
     
-    pdf.set_font(font_name, '', 9)
-    for zone in results['zones']:
-        zone_type = zone['type'][:15]
-        label = zone['label'][:50] + ('...' if len(zone['label']) > 50 else '')
-        if font_name != 'DejaVu':
-            label = transliterate_text(label)
-            zone_type = transliterate_text(zone_type)
-        pdf.cell(35, 7, zone_type, border=1)
-        pdf.cell(110, 7, label, border=1)
-        pdf.cell(30, 7, f"{zone['attention_pct']:.1f}%", border=1, ln=True)
+    pdf.ln(2)
+    total = results.get('total_zones_attention', 0)
+    pdf.set_font('helvetica', 'B', 10)
+    pdf.cell(0, 6, f'Total coverage: {total:.1f}%', ln=True)
+    pdf.ln(6)
     
-    pdf.ln(3)
-    pdf.set_font(font_name, 'B', 10)
-    pdf.cell(0, 8, f"Total coverage: {results['total_zones_attention']:.1f}%", ln=True)
-    pdf.ln(5)
-    
-    # Heatmap
+    # Heatmap image
     if os.path.exists(heatmap_path):
-        pdf.set_font(font_name, 'B', 14)
-        pdf.cell(0, 10, 'Attention Heatmap', ln=True)
-        
-        # Calculate image size to fit page
-        page_width = pdf.w - 40
-        pdf.image(heatmap_path, x=20, w=min(page_width, 170))
-        pdf.ln(5)
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.cell(0, 8, 'Attention Heatmap:', ln=True)
+        pdf.ln(2)
+        try:
+            pdf.image(heatmap_path, x=15, w=180)
+        except Exception:
+            pdf.cell(0, 6, '(Image not available)', ln=True)
+        pdf.ln(4)
     
     # Recommendations
     pdf.add_page()
-    pdf.set_font(font_name, 'B', 14)
+    pdf.set_font('helvetica', 'B', 14)
     pdf.cell(0, 10, 'Recommendations', ln=True)
+    pdf.ln(4)
     
-    priority_labels = {'High': 'HIGH', 'Medium': 'MEDIUM', 'Low': 'LOW'}
-    
-    for i, rec in enumerate(results['recommendations'][:5], 1):  # Max 5 recommendations
-        priority = priority_labels.get(rec.get('priority', 'Medium'), 'MEDIUM')
+    for i, rec in enumerate(results.get('recommendations', [])[:5], 1):
+        priority = rec.get('priority', 'Medium')
+        title = transliterate_text(rec.get('title', '')[:80])
+        desc = transliterate_text(rec.get('description', '')[:300])
+        impact = transliterate_text(rec.get('expected_impact', '')[:150])
         
-        title = rec.get('title', '')[:100]
-        desc = rec.get('description', '')[:400]
-        impact = rec.get('expected_impact', '')[:200]
-        
-        if font_name != 'DejaVu':
-            title = transliterate_text(title)
-            desc = transliterate_text(desc)
-            impact = transliterate_text(impact)
-        
-        pdf.set_font(font_name, 'B', 10)
+        pdf.set_font('helvetica', 'B', 10)
         pdf.multi_cell(0, 5, f"{i}. [{priority}] {title}")
         
-        pdf.set_font(font_name, '', 9)
+        pdf.set_font('helvetica', '', 9)
         pdf.multi_cell(0, 4, desc)
         
-        pdf.set_font(font_name, '', 8)
-        pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 4, f"Expected: {impact}")
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
+        if impact:
+            pdf.set_font('helvetica', 'I', 8)
+            pdf.multi_cell(0, 4, f"Impact: {impact}")
+        
+        pdf.ln(3)
     
-    # Return PDF bytes
     return bytes(pdf.output())
 
 
