@@ -42,30 +42,34 @@ def generate_pdf_report(results, heatmap_path):
     score = results['overall_score']
     pdf.cell(0, 10, f'Score: {score}/5.0', ln=True)
     
-    pdf.set_font(font_name, '', 11)
+    pdf.set_font(font_name, '', 10)
     # Transliterate for fallback font compatibility
-    reasoning = results['reasoning'] if font_name == 'DejaVu' else transliterate_text(results['reasoning'])
-    pdf.multi_cell(0, 6, reasoning)
+    reasoning = results.get('reasoning', '')[:500]  # Limit length
+    if font_name != 'DejaVu':
+        reasoning = transliterate_text(reasoning)
+    pdf.multi_cell(0, 5, reasoning)
     pdf.ln(5)
     
     # Attention Distribution Table
     pdf.set_font(font_name, 'B', 14)
     pdf.cell(0, 10, 'Attention Distribution', ln=True)
     
-    pdf.set_font(font_name, 'B', 10)
+    pdf.set_font(font_name, 'B', 9)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(50, 8, 'Type', border=1, fill=True)
-    pdf.cell(90, 8, 'Label', border=1, fill=True)
-    pdf.cell(40, 8, 'Attention %', border=1, fill=True, ln=True)
+    pdf.cell(35, 8, 'Type', border=1, fill=True)
+    pdf.cell(110, 8, 'Label', border=1, fill=True)
+    pdf.cell(30, 8, 'Attention', border=1, fill=True, ln=True)
     
-    pdf.set_font(font_name, '', 10)
+    pdf.set_font(font_name, '', 9)
     for zone in results['zones']:
-        label = zone['label'][:35] + ('...' if len(zone['label']) > 35 else '')
+        zone_type = zone['type'][:15]
+        label = zone['label'][:50] + ('...' if len(zone['label']) > 50 else '')
         if font_name != 'DejaVu':
             label = transliterate_text(label)
-        pdf.cell(50, 7, zone['type'], border=1)
-        pdf.cell(90, 7, label, border=1)
-        pdf.cell(40, 7, f"{zone['attention_pct']:.1f}%", border=1, ln=True)
+            zone_type = transliterate_text(zone_type)
+        pdf.cell(35, 7, zone_type, border=1)
+        pdf.cell(110, 7, label, border=1)
+        pdf.cell(30, 7, f"{zone['attention_pct']:.1f}%", border=1, ln=True)
     
     pdf.ln(3)
     pdf.set_font(font_name, 'B', 10)
@@ -89,24 +93,29 @@ def generate_pdf_report(results, heatmap_path):
     
     priority_labels = {'High': 'HIGH', 'Medium': 'MEDIUM', 'Low': 'LOW'}
     
-    for i, rec in enumerate(results['recommendations'], 1):
-        priority = priority_labels.get(rec['priority'], rec['priority'])
+    for i, rec in enumerate(results['recommendations'][:5], 1):  # Max 5 recommendations
+        priority = priority_labels.get(rec.get('priority', 'Medium'), 'MEDIUM')
         
-        title = rec['title'] if font_name == 'DejaVu' else transliterate_text(rec['title'])
-        desc = rec['description'] if font_name == 'DejaVu' else transliterate_text(rec['description'])
-        impact = rec['expected_impact'] if font_name == 'DejaVu' else transliterate_text(rec['expected_impact'])
+        title = rec.get('title', '')[:100]
+        desc = rec.get('description', '')[:400]
+        impact = rec.get('expected_impact', '')[:200]
         
-        pdf.set_font(font_name, 'B', 11)
-        pdf.multi_cell(0, 6, f"{i}. [{priority}] {title}")
+        if font_name != 'DejaVu':
+            title = transliterate_text(title)
+            desc = transliterate_text(desc)
+            impact = transliterate_text(impact)
         
-        pdf.set_font(font_name, '', 10)
-        pdf.multi_cell(0, 5, desc)
+        pdf.set_font(font_name, 'B', 10)
+        pdf.multi_cell(0, 5, f"{i}. [{priority}] {title}")
         
         pdf.set_font(font_name, '', 9)
+        pdf.multi_cell(0, 4, desc)
+        
+        pdf.set_font(font_name, '', 8)
         pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 5, f"Expected impact: {impact}")
+        pdf.multi_cell(0, 4, f"Expected: {impact}")
         pdf.set_text_color(0, 0, 0)
-        pdf.ln(3)
+        pdf.ln(2)
     
     # Return PDF bytes
     return bytes(pdf.output())
