@@ -29,6 +29,52 @@ if not API_KEY:
         print("⚠️  Warning: API key not found. For Streamlit Cloud, add OPENAI_API_KEY to Secrets. For local, copy config.example.py to config.py and add your API key.")
         API_KEY = ''
 
+# Maximum image dimension to prevent OOM errors
+# Reduced for Streamlit Cloud (1GB RAM limit: DeepGaze ~500MB + PyTorch ~200MB)
+MAX_IMAGE_DIMENSION = 600
+
+# Global model caches — avoid reloading on each analysis
+_deepgaze_model = None
+_easyocr_reader = None
+
+
+def get_deepgaze_model():
+    """Get cached DeepGaze model (lazy loading, ~500MB)"""
+    global _deepgaze_model
+    if _deepgaze_model is None:
+        print("  Loading DeepGaze model (first time, will be cached)...")
+        _deepgaze_model = DeepGazeIIE(pretrained=True)
+        _deepgaze_model.eval()
+    return _deepgaze_model
+
+
+def get_easyocr_reader():
+    """Get cached EasyOCR reader (lazy loading)"""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        print("  Loading EasyOCR model (first time, will be cached)...")
+        _easyocr_reader = easyocr.Reader(['ru', 'en'], gpu=False, verbose=False)
+    return _easyocr_reader
+
+
+def resize_image_if_needed(img, max_dim=MAX_IMAGE_DIMENSION):
+    """Resize image if larger than max_dim to prevent OOM errors.
+    
+    Returns:
+        tuple: (resized_img, scale_factor) where scale_factor is used to 
+               scale coordinates back to original size
+    """
+    width, height = img.size
+    if max(width, height) <= max_dim:
+        return img, 1.0
+    
+    scale = max_dim / max(width, height)
+    new_size = (int(width * scale), int(height * scale))
+    resized = img.resize(new_size, Image.LANCZOS)
+    print(f"  ⚠️ Resized image: {width}x{height} → {new_size[0]}x{new_size[1]}")
+    return resized, scale
+
+
 def print_step(step, title):
     print(f"\n{'='*70}")
     print(f"STEP {step}: {title}")
@@ -42,12 +88,20 @@ def generate_saliency_map(image_path):
     """Generate saliency map using DeepGaze"""
     print("  Generating saliency map with DeepGaze...")
 
-    img = Image.open(image_path).convert('RGB')
-    img_array = np.array(img)
-    height, width = img_array.shape[:2]
+    img_original = Image.open(image_path).convert('RGB')
+    original_width, original_height = img_original.size
+    
+    # Resize if needed to prevent OOM
+    img_resized, scale = resize_image_if_needed(img_original)
+    img_array_resized = np.array(img_resized)
+    height, width = img_array_resized.shape[:2]
+    
+    # Free resized PIL image (keep only numpy array)
+    del img_resized
 
-    model = DeepGazeIIE(pretrained=True)
-    image_tensor = torch.from_numpy(img_array.transpose(2, 0, 1)[None, ...]).float()
+    # Use cached model to avoid reloading (~500MB)
+    model = get_deepgaze_model()
+    image_tensor = torch.from_numpy(img_array_resized.transpose(2, 0, 1)[None, ...]).float()
 
     centerbias = np.zeros((height, width))
     centerbias -= logsumexp(centerbias)
@@ -55,10 +109,25 @@ def generate_saliency_map(image_path):
 
     with torch.no_grad():
         log_density = model(image_tensor, centerbias_tensor)
-
+    
+    # Free tensors immediately
+    del image_tensor, centerbias_tensor
+    
     saliency_map = log_density.exp().numpy()[0, 0]
-
-    print(f"  ✅ Saliency map generated ({width}x{height})")
+    del log_density
+    
+    # Resize saliency map back to original dimensions if we resized
+    if scale < 1.0:
+        saliency_map = cv2.resize(saliency_map, (original_width, original_height), 
+                                   interpolation=cv2.INTER_LINEAR)
+        # Use original image for output
+        img_array = np.array(img_original)
+        print(f"  ✅ Saliency map generated at {width}x{height}, scaled to {original_width}x{original_height}")
+    else:
+        img_array = img_array_resized
+        print(f"  ✅ Saliency map generated ({width}x{height})")
+    
+    del img_original
     return img_array, saliency_map
 
 # ============================================================================
@@ -69,9 +138,13 @@ def detect_text_blocks(image_path):
     """Detect text blocks using EasyOCR with preprocessing"""
     print("  Detecting text blocks with EasyOCR...")
 
-    reader = easyocr.Reader(['ru', 'en'], gpu=False, verbose=False)
-    img = Image.open(image_path)
-    img_array = np.array(img)
+    # Use cached reader to avoid reloading models
+    reader = get_easyocr_reader()
+    img_original = Image.open(image_path)
+    
+    # Resize if needed to prevent OOM
+    img_resized, scale = resize_image_if_needed(img_original)
+    img_array = np.array(img_resized)
     
     # Preprocess image for better OCR on bright/colored backgrounds
     # Convert to grayscale and enhance contrast
@@ -105,6 +178,13 @@ def detect_text_blocks(image_path):
         y = int(min(y_coords))
         w = int(max(x_coords) - x)
         h = int(max(y_coords) - y)
+        
+        # Scale coordinates back to original image size
+        if scale < 1.0:
+            x = int(x / scale)
+            y = int(y / scale)
+            w = int(w / scale)
+            h = int(h / scale)
 
         # Lower threshold for more coverage
         if conf < 0.2 or len(text) < 2:
@@ -949,9 +1029,9 @@ def analyze_creative_final(image_path, filter_legal=True):
     print(f"FINAL CREATIVE ANALYSIS: {base_name}")
     print("="*70)
 
-    # Get image dimensions
-    img = Image.open(image_path)
-    img_width, img_height = img.size
+    # Get image dimensions without keeping full image in memory
+    with Image.open(image_path) as img:
+        img_width, img_height = img.size
     print(f"Image size: {img_width}x{img_height}")
 
     # Step 1: Generate Saliency Map
