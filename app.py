@@ -13,7 +13,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
+from PIL import Image
 from analyze_creative_final import analyze_creative_final
+
+# Max dimension for uploaded images (prevents OOM on Streamlit Cloud 1GB)
+MAX_UPLOAD_DIMENSION = 1024
 
 
 def generate_pdf_report(results, heatmap_path):
@@ -329,10 +333,17 @@ if st.button("Анализировать", type="primary", use_container_width=T
         st.error(f"## ❌ Error\n\n{img_msg}")
         st.stop()
 
-    # Save uploaded file temporarily
+    # Save uploaded file temporarily, resizing if too large
     temp_path = f"/tmp/{uploaded_file.name}"
-    with open(temp_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    img = Image.open(uploaded_file)
+    w, h = img.size
+    if max(w, h) > MAX_UPLOAD_DIMENSION:
+        scale = MAX_UPLOAD_DIMENSION / max(w, h)
+        new_size = (int(w * scale), int(h * scale))
+        img = img.resize(new_size, Image.LANCZOS)
+        st.info(f"Изображение уменьшено: {w}×{h} → {new_size[0]}×{new_size[1]}")
+    img.save(temp_path)
+    img.close()
 
     try:
         # Progress tracking
