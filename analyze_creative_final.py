@@ -979,8 +979,8 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
                 'content': prompt
             }
         ],
-        'max_completion_tokens': 1500,
-        'reasoning_effort': 'medium'
+        'max_completion_tokens': 4000,
+        'reasoning_effort': 'low'
     }
 
     response = requests.post(
@@ -999,7 +999,15 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
         raise Exception(error_msg)
 
     result = response.json()
-    text = result['choices'][0]['message']['content'].strip()
+    choice = result['choices'][0]
+    finish_reason = choice.get('finish_reason', 'unknown')
+    text = choice['message'].get('content') or ''
+    text = text.strip()
+
+    if not text:
+        error_msg = f"GPT-5.2 returned empty content. finish_reason={finish_reason}"
+        print(f"  ⚠️ {error_msg}")
+        raise Exception(error_msg)
 
     # Parse JSON
     if text.startswith('```'):
