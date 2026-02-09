@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
-from analyze_creative_final import analyze_creative_final
+from analyze_creative_final import analyze_creative_final, build_edit_prompt, regenerate_creative
 
 # Max dimension for uploaded images (prevents OOM on Streamlit Cloud 1GB)
 MAX_UPLOAD_DIMENSION = 1024
@@ -401,6 +401,72 @@ if st.button("Анализировать", type="primary", use_container_width=T
         except Exception as e:
             st.error(f"Ошибка генерации PDF: {str(e)}")
 
+        # Regeneration section
+        st.markdown("---")
+        st.markdown("### Сгенерировать улучшенный вариант")
+        st.caption("AI-концепт для вдохновения. Может содержать неточности в тексте и деталях бренда.")
+
+        if st.button("🎨 Сгенерировать", type="secondary", use_container_width=True):
+            try:
+                regen_progress = st.progress(0, text="Формирование задания...")
+
+                # Step 10: Build edit prompt
+                regen_progress.progress(0.3, text="Формирование задания для генерации...")
+                img_for_size = Image.open(temp_path)
+                regen_w, regen_h = img_for_size.size
+                img_for_size.close()
+                edit_data = build_edit_prompt(
+                    results['zones'],
+                    results['recommendations'],
+                    regen_w, regen_h
+                )
+
+                if edit_data is None:
+                    regen_progress.empty()
+                    st.warning("Нет рекомендаций высокого приоритета для генерации")
+                else:
+                    # Step 11: Regenerate
+                    regen_progress.progress(0.5, text="Генерация улучшенного варианта...")
+                    base_name = os.path.splitext(os.path.basename(temp_path))[0]
+                    improved_path = f"/tmp/{base_name}_improved.jpg"
+                    result_path = regenerate_creative(temp_path, edit_data, improved_path)
+
+                    regen_progress.progress(1.0, text="✅ Готово!")
+                    regen_progress.empty()
+
+                    if result_path and os.path.exists(result_path):
+                        # Side-by-side display
+                        st.markdown("### Сравнение")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Оригинал**")
+                            st.image(temp_path, use_container_width=True)
+                        with col2:
+                            st.markdown("**Улучшенный вариант**")
+                            st.image(result_path, use_container_width=True)
+
+                        # Download improved JPG
+                        with open(result_path, 'rb') as f:
+                            improved_bytes = f.read()
+                        st.download_button(
+                            label="📥 Скачать улучшенный баннер (JPG)",
+                            data=improved_bytes,
+                            file_name=f"{base_name}_improved.jpg",
+                            mime="image/jpeg",
+                            use_container_width=True
+                        )
+                    else:
+                        st.error("Не удалось сгенерировать — модель отклонила запрос. Используйте рекомендации для ручной доработки.")
+
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "rate limit" in error_msg.lower():
+                    st.error("⚠️ Превышен лимит запросов. Попробуйте позже")
+                elif "billing" in error_msg.lower() or "insufficient_quota" in error_msg.lower():
+                    st.error("⚠️ Недостаточно средств на балансе OpenAI")
+                else:
+                    st.error(f"⚠️ Ошибка генерации: {error_msg}")
+
     except Exception as e:
         error_msg = str(e)
 
@@ -417,9 +483,8 @@ if st.button("Анализировать", type="primary", use_container_width=T
             st.error(f"⚠️ Непредвиденная ошибка: {error_msg}")
 
     finally:
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # Keep temp file for potential regeneration — Streamlit will clean /tmp
+        pass
 
 # Footer
 st.markdown("---")
