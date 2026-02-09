@@ -463,7 +463,8 @@ if st.session_state.results is not None:
 
             if edit_data is None:
                 regen_progress.empty()
-                st.warning("Нет рекомендаций высокого приоритета для генерации")
+                priorities = [r.get('priority', 'N/A') for r in results['recommendations']]
+                st.warning(f"Не удалось сформировать задание для генерации. Приоритеты рекомендаций: {priorities}")
             else:
                 # Step 11: Regenerate
                 regen_progress.progress(0.5, text="Генерация улучшенного варианта...")
