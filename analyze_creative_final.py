@@ -749,8 +749,8 @@ def calculate_attention(saliency_map, zones):
 # STEP 8: Generate Recommendations
 # ============================================================================
 
-def generate_recommendations(zones, total_zones_attention, background_attention):
-    """Generate recommendations using GPT-5.2"""
+def generate_recommendations(zones, total_zones_attention, background_attention, image_path=None):
+    """Generate recommendations using GPT-5.2 with optional vision"""
     print("  Generating recommendations with GPT-5.2...")
 
     zones_summary = []
@@ -812,16 +812,18 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
 
 ## ОЦЕНКА
 
-На основе данных eye-tracking и критериев выше, оцени:
+На основе данных eye-tracking, визуального анализа баннера и критериев выше, оцени:
 
-1. **Overall Score (1-5)**:
-   - 5 = Отлично: чёткое УТП, правильная иерархия, заметный CTA, баланс
-   - 4 = Хорошо: небольшие улучшения
-   - 3 = Средне: есть проблемы с иерархией или CTA
-   - 2 = Плохо: нечёткое сообщение, плохая иерархия
-   - 1 = Критично: внимание не на ключевых элементах
+1. **Overall Score (1-5)** — используй ВСЮ шкалу, включая дробные значения:
+   - **4.5-5.0** = Отлично: чёткое УТП с высоким вниманием (header >25%), правильная иерархия, CTA заметен (>8%), высокий охват (>80%), визуально привлекательный дизайн
+   - **3.5-4.4** = Хорошо: основные элементы работают, но есть 1-2 области для улучшения. Иерархия в целом правильная
+   - **2.5-3.4** = Средне: заметные проблемы — CTA не привлекает внимание (<5%), или header теряется, или слишком много внимания на фон (>30%), или визуальная иерархия нарушена
+   - **1.5-2.4** = Плохо: серьёзные проблемы — нечёткое сообщение, внимание разбросано, ключевые элементы не видны, плохой баланс
+   - **1.0-1.4** = Критично: внимание совсем не на ключевых элементах, баннер не выполняет задачу
 
-2. **Reasoning** — 2-3 предложения, объясняющих оценку
+   ВАЖНО: Не тяготей к 3-3.5. Хорошие баннеры заслуживают 4+, плохие — 2 и ниже. Будь честным и дифференцируй.
+
+2. **Reasoning** — 2-3 предложения, объясняющих оценку. Упомяни конкретные числа attention.
 
 3. **Рекомендации (3-5 штук)** — конкретные улучшения:
    - priority: "High" / "Medium" / "Low"
@@ -831,8 +833,8 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
 
 Верни ТОЛЬКО JSON:
 {{
-  "overall_score": 3.5,
-  "reasoning": "объяснение",
+  "overall_score": <число от 1.0 до 5.0>,
+  "reasoning": "объяснение с конкретными числами",
   "recommendations": [
     {{
       "priority": "High",
@@ -843,16 +845,34 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
   ]
 }}"""
 
+    # Build user message — with or without vision
+    if image_path:
+        try:
+            with open(image_path, 'rb') as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            ext = image_path.lower().rsplit('.', 1)[-1]
+            mime = 'image/jpeg' if ext in ('jpg', 'jpeg') else 'image/png'
+            user_content = [
+                {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{img_b64}', 'detail': 'low'}},
+                {'type': 'text', 'text': prompt}
+            ]
+            print("  Using vision: banner image included in prompt")
+        except Exception as e:
+            print(f"  ⚠️ Could not attach image for vision: {e}")
+            user_content = prompt
+    else:
+        user_content = prompt
+
     payload = {
         'model': 'gpt-5.2',
         'messages': [
             {
                 'role': 'system',
-                'content': 'Ты эксперт по медийной рекламе и дизайну баннеров с опытом работы в ведущих рекламных агентствах (REDKEDS, ИКРА, FABULA). Ты знаешь профессиональные стандарты создания эффективных баннеров и даёшь практичные рекомендации на основе данных eye-tracking.'
+                'content': 'Ты эксперт по медийной рекламе и дизайну баннеров с опытом работы в ведущих рекламных агентствах (REDKEDS, ИКРА, FABULA). Ты знаешь профессиональные стандарты создания эффективных баннеров и даёшь практичные рекомендации на основе данных eye-tracking. Ты видишь сам баннер и можешь оценить его дизайн, цвета, типографику, композицию.'
             },
             {
                 'role': 'user',
-                'content': prompt
+                'content': user_content
             }
         ],
         'max_completion_tokens': 2000,
@@ -1385,7 +1405,8 @@ def analyze_creative_final(image_path, filter_legal=True, regenerate=False):
     recommendations = generate_recommendations(
         zones_with_attention,
         total_zones_attention,
-        background_attention
+        background_attention,
+        image_path=image_path
     )
 
     # Step 9: Create Visualization
