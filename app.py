@@ -13,7 +13,12 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
-from analyze_creative_final import analyze_creative_final, build_edit_prompt, regenerate_creative
+from analyze_creative_final import (
+    analyze_creative_final, build_edit_prompt, regenerate_creative,
+    generate_saliency_map, detect_text_blocks, group_and_classify_text_zones,
+    detect_visual_elements_gpt41, refine_cta_bbox, merge_all_zones,
+    calculate_attention, generate_recommendations
+)
 
 # Max dimension for uploaded images (prevents OOM on Streamlit Cloud 1GB)
 MAX_UPLOAD_DIMENSION = 1024
@@ -304,6 +309,8 @@ if 'heatmap_path' not in st.session_state:
     st.session_state.heatmap_path = None
 if 'improved_bytes' not in st.session_state:
     st.session_state.improved_bytes = None
+if 'improved_score' not in st.session_state:
+    st.session_state.improved_score = None
 if 'uploaded_file_name' not in st.session_state:
     st.session_state.uploaded_file_name = None
 
@@ -334,6 +341,7 @@ if uploaded_file and uploaded_file.name != st.session_state.uploaded_file_name:
     st.session_state.temp_path = None
     st.session_state.heatmap_path = None
     st.session_state.improved_bytes = None
+    st.session_state.improved_score = None
     st.session_state.uploaded_file_name = uploaded_file.name
 
 # Display uploaded image preview
@@ -381,6 +389,7 @@ if st.button("Анализировать", type="primary", use_container_width=T
         st.session_state.temp_path = temp_path
         st.session_state.heatmap_path = heatmap_path
         st.session_state.improved_bytes = None  # reset regeneration on new analysis
+        st.session_state.improved_score = None
 
         progress_bar.empty()
 
@@ -473,12 +482,31 @@ if st.session_state.results is not None:
                 improved_path = f"/tmp/{base_name}_improved.jpg"
                 result_path = regenerate_creative(temp_path, edit_data, improved_path)
 
-                regen_progress.progress(1.0, text="✅ Готово!")
-                regen_progress.empty()
-
                 if result_path and os.path.exists(result_path):
                     with open(result_path, 'rb') as f:
                         st.session_state.improved_bytes = f.read()
+
+                    # Quick scoring: reuse zones from original, recalculate attention on new saliency
+                    regen_progress.progress(0.7, text="Оцениваем улучшенный вариант...")
+                    try:
+                        orig_zones = [
+                            {k: v for k, v in z.items() if k != 'attention_pct'}
+                            for z in results['zones']
+                        ]
+                        _, imp_saliency = generate_saliency_map(result_path)
+                        imp_zones, imp_total = calculate_attention(imp_saliency, orig_zones)
+                        imp_bg = 100 - imp_total
+                        imp_recs = generate_recommendations(
+                            imp_zones, imp_total, imp_bg,
+                            image_path=result_path
+                        )
+                        st.session_state.improved_score = imp_recs['overall_score']
+                    except Exception as e:
+                        print(f"  ⚠️ Could not score improved banner: {e}")
+                        st.session_state.improved_score = None
+
+                    regen_progress.progress(1.0, text="✅ Готово!")
+                    regen_progress.empty()
                 else:
                     st.error("Не удалось сгенерировать — модель отклонила запрос. Используйте рекомендации для ручной доработки.")
 
@@ -494,12 +522,24 @@ if st.session_state.results is not None:
     # --- Display regeneration result from session state ---
     if st.session_state.improved_bytes is not None:
         st.markdown("### Сравнение")
+
+        orig_score = results['overall_score']
+        improved_score = st.session_state.improved_score
+
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Оригинал**")
+            score_text = f"**Оригинал** — {orig_score}/5.0"
+            st.markdown(score_text)
             st.image(temp_path, width="stretch")
         with col2:
-            st.markdown("**Улучшенный вариант**")
+            if improved_score is not None:
+                delta = improved_score - orig_score
+                delta_icon = "🟢" if delta > 0 else ("🔴" if delta < 0 else "🟡")
+                delta_str = f"+{delta:.1f}" if delta > 0 else f"{delta:.1f}"
+                score_text = f"**Улучшенный** — {improved_score}/5.0 ({delta_icon} {delta_str})"
+            else:
+                score_text = "**Улучшенный вариант**"
+            st.markdown(score_text)
             st.image(st.session_state.improved_bytes, width="stretch")
 
         base_name = os.path.splitext(os.path.basename(temp_path))[0]
