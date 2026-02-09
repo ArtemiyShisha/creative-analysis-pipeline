@@ -1228,7 +1228,7 @@ def save_heatmap(image_path, saliency_map, output_path):
 # MAIN PIPELINE
 # ============================================================================
 
-def analyze_creative_final(image_path, filter_legal=True):
+def analyze_creative_final(image_path, filter_legal=True, regenerate=False):
     """Final complete analysis pipeline"""
 
     base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -1295,8 +1295,27 @@ def analyze_creative_final(image_path, filter_legal=True):
     heatmap_path = f"{base_name}_heatmap.jpg"
     save_heatmap(image_path, saliency_map, heatmap_path)
 
+    # Step 10-11: Regenerate (optional)
+    improved_path = None
+    if regenerate:
+        print_step(10, "Build Edit Prompt (GPT-5.2)")
+        edit_data = build_edit_prompt(
+            zones_with_attention,
+            recommendations['recommendations'],
+            img_width, img_height
+        )
+
+        if edit_data:
+            print_step(11, "Regenerate Creative (GPT Image)")
+            improved_path = regenerate_creative(
+                image_path,
+                edit_data,
+                f"{base_name}_improved.jpg"
+            )
+
     # Save Results
-    print_step(10, "Save Results")
+    save_step = 12 if regenerate else 10
+    print_step(save_step, "Save Results")
     results = {
         'image': image_path,
         'zones': zones_with_attention,
@@ -1304,7 +1323,8 @@ def analyze_creative_final(image_path, filter_legal=True):
         'background_attention': round(background_attention, 1),
         'overall_score': recommendations['overall_score'],
         'reasoning': recommendations['reasoning'],
-        'recommendations': recommendations['recommendations']
+        'recommendations': recommendations['recommendations'],
+        'improved_image': improved_path
     }
 
     output_path = f"{base_name}_final.json"
@@ -1344,25 +1364,28 @@ def analyze_creative_final(image_path, filter_legal=True):
     print("✅ Analysis completed!")
     print(f"📁 Results: {output_path}")
     print(f"🖼️  Visualization: {viz_path}")
+    if improved_path:
+        print(f"🎨 Improved: {improved_path}")
     print("="*70)
 
     return results
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 analyze_creative_final.py <image_path>")
-        print("\nExample:")
-        print("  python3 analyze_creative_final.py yandex_pay.png")
-        sys.exit(1)
+    import argparse
 
-    image_path = sys.argv[1]
+    parser = argparse.ArgumentParser(description='Analyze advertising creatives')
+    parser.add_argument('image_path', help='Path to the creative image')
+    parser.add_argument('--regenerate', action='store_true',
+                        help='Generate improved version of the banner')
 
-    if not os.path.exists(image_path):
-        print(f"❌ Error: Image not found: {image_path}")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.image_path):
+        print(f"❌ Error: Image not found: {args.image_path}")
         sys.exit(1)
 
     try:
-        analyze_creative_final(image_path)
+        analyze_creative_final(args.image_path, regenerate=args.regenerate)
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
