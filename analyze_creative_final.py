@@ -1073,6 +1073,7 @@ def build_edit_prompt(zones, recommendations, img_width, img_height, image_path=
 - Начни с "Edit this banner:"
 - Будь конкретным и кратким (модель не любит длинные промпты)
 - ОБЯЗАТЕЛЬНО добавь: "Keep the same visual style, colors, fonts, and brand identity. All text must be in Russian."
+- КРИТИЧНО: Каждый текстовый элемент должен появиться РОВНО ОДИН РАЗ. Не дублируй текст! Если добавляешь новый элемент (CTA, промокод) — он должен быть в одном месте. Добавь в промпт: "IMPORTANT: Each text element must appear exactly once. Do NOT duplicate any text blocks."
 
 Верни ТОЛЬКО JSON:
 {{{{
@@ -1188,6 +1189,7 @@ def regenerate_creative(image_path, edit_data, output_path):
         edit_prompt += f"\n\nPreserve unchanged: {', '.join(preserve)}."
 
     edit_prompt += "\n\nAll text on the banner MUST remain in Russian. Do not translate to English. Make sure all text is fully visible and not cut off by edges."
+    edit_prompt += "\n\nCRITICAL: Each text element must appear EXACTLY ONCE on the banner. Do NOT duplicate or repeat any text blocks. If a promo code, headline, or CTA already exists, do not add another copy of it."
     edit_prompt += "\n\nIMPORTANT: The banner is placed in the CENTER of the canvas. Only edit the banner area. Do NOT add content to the empty padding areas above and below the banner — leave them as solid background."
 
     # Get original dimensions
