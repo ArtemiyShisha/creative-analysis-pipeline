@@ -458,7 +458,8 @@ if st.session_state.results is not None:
             edit_data = build_edit_prompt(
                 results['zones'],
                 results['recommendations'],
-                regen_w, regen_h
+                regen_w, regen_h,
+                image_path=temp_path
             )
 
             if edit_data is None:
