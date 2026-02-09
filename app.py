@@ -14,10 +14,7 @@ import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
 from analyze_creative_final import (
-    analyze_creative_final, build_edit_prompt, regenerate_creative,
-    generate_saliency_map, detect_text_blocks, group_and_classify_text_zones,
-    detect_visual_elements_gpt41, refine_cta_bbox, merge_all_zones,
-    calculate_attention, generate_recommendations
+    analyze_creative_final, build_edit_prompt, regenerate_creative
 )
 
 # Max dimension for uploaded images (prevents OOM on Streamlit Cloud 1GB)
@@ -486,21 +483,11 @@ if st.session_state.results is not None:
                     with open(result_path, 'rb') as f:
                         st.session_state.improved_bytes = f.read()
 
-                    # Quick scoring: reuse zones from original, recalculate attention on new saliency
-                    regen_progress.progress(0.7, text="Оцениваем улучшенный вариант...")
+                    # Full pipeline scoring: analyze regenerated banner from scratch
+                    regen_progress.progress(0.7, text="Анализируем улучшенный вариант (полный пайплайн)...")
                     try:
-                        orig_zones = [
-                            {k: v for k, v in z.items() if k != 'attention_pct'}
-                            for z in results['zones']
-                        ]
-                        _, imp_saliency = generate_saliency_map(result_path)
-                        imp_zones, imp_total = calculate_attention(imp_saliency, orig_zones)
-                        imp_bg = 100 - imp_total
-                        imp_recs = generate_recommendations(
-                            imp_zones, imp_total, imp_bg,
-                            image_path=result_path
-                        )
-                        st.session_state.improved_score = imp_recs['overall_score']
+                        imp_results = analyze_creative_final(result_path, filter_legal=True)
+                        st.session_state.improved_score = imp_results['overall_score']
                     except Exception as e:
                         print(f"  ⚠️ Could not score improved banner: {e}")
                         st.session_state.improved_score = None

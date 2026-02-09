@@ -746,12 +746,109 @@ def calculate_attention(saliency_map, zones):
     return zones_with_attention, total_zones_attention
 
 # ============================================================================
+# STEP 7.5: Calculate Score (deterministic formula, no API)
+# ============================================================================
+
+def calculate_score(zones, total_zones_attention, background_attention):
+    """Calculate deterministic score from metrics — pure formula, no LLM.
+
+    Each criterion is scored independently on 1.0-5.0 scale.
+    Overall score = average of all applicable criteria.
+    Elements not present (no CTA, no logo) are excluded from the average.
+
+    Criteria:
+      - Header attention   — sweet spot 20-40%
+      - CTA                — sweet spot 8-20%
+      - Coverage           — sweet spot 80-100%
+      - Background balance — sweet spot 10-25%
+      - Visual hierarchy   — header is #1 among text zones
+      - Logo               — sweet spot 3-12%
+    """
+
+    def sweet_spot(value, ideal_low, ideal_high, zero_low, zero_high):
+        """Score 1.0-5.0 based on distance from ideal range.
+
+        In [ideal_low, ideal_high] → 5.0.
+        At zero_low or zero_high → 1.0.
+        Linear falloff between, rounded to 0.1.
+        """
+        if ideal_low <= value <= ideal_high:
+            ratio = 1.0
+        elif value < ideal_low:
+            ratio = max(0.0, (value - zero_low) / (ideal_low - zero_low))
+        else:
+            ratio = max(0.0, (zero_high - value) / (zero_high - ideal_high))
+        return round(1.0 + 4.0 * ratio, 1)
+
+    def zone_attn(zone_type):
+        for z in zones:
+            if z['type'] == zone_type:
+                return z.get('attention_pct', 0)
+        return None
+
+    header_attn = zone_attn('header')
+    cta_attn = zone_attn('cta')
+    logo_attn = zone_attn('logo')
+
+    element_scores = {}
+
+    # Header (required): sweet spot 20-40%, zero at 5% / 65%
+    if header_attn is not None:
+        element_scores['header'] = sweet_spot(header_attn, 20, 40, 5, 65)
+    else:
+        element_scores['header'] = 1.0  # no header = no offer, worst score
+
+    # CTA (required): sweet spot 8-20%, zero at 2% / 35%
+    if cta_attn is not None:
+        element_scores['cta'] = sweet_spot(cta_attn, 8, 20, 2, 35)
+    else:
+        element_scores['cta'] = 2.0  # no CTA, banner is clickable but weaker
+
+    # Coverage: sweet spot 80-100%, zero at 40% (no upper penalty)
+    element_scores['coverage'] = sweet_spot(total_zones_attention, 80, 100, 40, 101)
+
+    # Background balance: sweet spot 10-25%, zero at 0% / 45%
+    element_scores['background'] = sweet_spot(background_attention, 10, 25, 0, 45)
+
+    # Visual hierarchy: how dominant is header among text zones
+    text_types = {'header', 'subheader', 'cta', 'slogan', 'description'}
+    text_zones = [z for z in zones if z['type'] in text_types]
+    if text_zones and header_attn is not None:
+        max_text_attn = max(z.get('attention_pct', 0) for z in text_zones)
+        if max_text_attn > 0:
+            ratio = min(header_attn / max_text_attn, 1.0)
+            element_scores['hierarchy'] = round(1.0 + 4.0 * ratio, 1)
+
+    # Logo: sweet spot 3-12%, zero at 0% / 25%
+    if logo_attn is not None:
+        element_scores['logo'] = sweet_spot(logo_attn, 3, 12, 0, 25)
+
+    # Log breakdown
+    for name, s in element_scores.items():
+        print(f"    {name}: {s}/5.0")
+
+    if not element_scores:
+        return 1.0
+
+    overall = sum(element_scores.values()) / len(element_scores)
+    return round(overall, 1)
+
+
+# ============================================================================
 # STEP 8: Generate Recommendations
 # ============================================================================
 
-def generate_recommendations(zones, total_zones_attention, background_attention, image_path=None):
-    """Generate recommendations using GPT-5.2 with optional vision"""
+def generate_recommendations(zones, total_zones_attention, background_attention, image_path=None, precalculated_score=None):
+    """Generate recommendations using GPT-5.2 with optional vision.
+
+    Score is deterministic (formula via calculate_score).
+    GPT-5.2 only generates reasoning + recommendations.
+    """
     print("  Generating recommendations with GPT-5.2...")
+
+    # Use precalculated deterministic score
+    score = precalculated_score if precalculated_score is not None else calculate_score(zones, total_zones_attention, background_attention)
+    print(f"  Formula score: {score}/5.0")
 
     zones_summary = []
     for zone in zones:
@@ -769,6 +866,8 @@ def generate_recommendations(zones, total_zones_attention, background_attention,
 **Покрытие:**
 - Контентные зоны: {total_zones_attention}%
 - Фон/пустое пространство: {background_attention}%
+
+**Рассчитанный скор: {score}/5.0** (рассчитан формулой на основе метрик, не нужно пересчитывать).
 
 ---
 
@@ -810,22 +909,13 @@ def generate_recommendations(zones, total_zones_attention, background_attention,
 
 ---
 
-## ОЦЕНКА
+## ЗАДАЧА
 
-На основе данных eye-tracking, визуального анализа баннера и критериев выше, оцени:
+Скор уже рассчитан формулой: **{score}/5.0**. Тебе нужно:
 
-1. **Overall Score (1-5)** — используй ВСЮ шкалу, включая дробные значения:
-   - **4.5-5.0** = Отлично: чёткое УТП с высоким вниманием (header >25%), правильная иерархия, CTA заметен (>8%), высокий охват (>80%), визуально привлекательный дизайн
-   - **3.5-4.4** = Хорошо: основные элементы работают, но есть 1-2 области для улучшения. Иерархия в целом правильная
-   - **2.5-3.4** = Средне: заметные проблемы — CTA не привлекает внимание (<5%), или header теряется, или слишком много внимания на фон (>30%), или визуальная иерархия нарушена
-   - **1.5-2.4** = Плохо: серьёзные проблемы — нечёткое сообщение, внимание разбросано, ключевые элементы не видны, плохой баланс
-   - **1.0-1.4** = Критично: внимание совсем не на ключевых элементах, баннер не выполняет задачу
+1. **Reasoning** — 2-3 предложения, объясняющих скор {score}/5.0. Упомяни конкретные числа attention. Объясни, почему скор такой (что хорошо и что плохо).
 
-   ВАЖНО: Не тяготей к 3-3.5. Хорошие баннеры заслуживают 4+, плохие — 2 и ниже. Будь честным и дифференцируй.
-
-2. **Reasoning** — 2-3 предложения, объясняющих оценку. Упомяни конкретные числа attention.
-
-3. **Рекомендации (3-5 штук)** — конкретные улучшения:
+2. **Рекомендации (3-5 штук)** — конкретные улучшения:
    - priority: "High" / "Medium" / "Low"
    - title: короткий заголовок
    - description: что и как улучшить
@@ -833,8 +923,7 @@ def generate_recommendations(zones, total_zones_attention, background_attention,
 
 Верни ТОЛЬКО JSON:
 {{
-  "overall_score": <число от 1.0 до 5.0>,
-  "reasoning": "объяснение с конкретными числами",
+  "reasoning": "объяснение скора {score}/5.0 с конкретными числами",
   "recommendations": [
     {{
       "priority": "High",
@@ -868,7 +957,7 @@ def generate_recommendations(zones, total_zones_attention, background_attention,
         'messages': [
             {
                 'role': 'system',
-                'content': 'Ты эксперт по медийной рекламе и дизайну баннеров с опытом работы в ведущих рекламных агентствах (REDKEDS, ИКРА, FABULA). Ты знаешь профессиональные стандарты создания эффективных баннеров и даёшь практичные рекомендации на основе данных eye-tracking. Ты видишь сам баннер и можешь оценить его дизайн, цвета, типографику, композицию.'
+                'content': 'Ты эксперт по медийной рекламе и дизайну баннеров с опытом работы в ведущих рекламных агентствах (REDKEDS, ИКРА, FABULA). Ты знаешь профессиональные стандарты создания эффективных баннеров и даёшь практичные рекомендации на основе данных eye-tracking. Ты видишь сам баннер и можешь оценить его дизайн, цвета, типографику, композицию. Скор уже рассчитан формулой — твоя задача объяснить его и дать рекомендации.'
             },
             {
                 'role': 'user',
@@ -902,10 +991,17 @@ def generate_recommendations(zones, total_zones_attention, background_attention,
         if text.startswith('json'):
             text = text[4:].strip()
 
-    recommendations = json.loads(text)
+    gpt_result = json.loads(text)
+
+    # Combine: formula score + GPT reasoning/recommendations
+    recommendations = {
+        'overall_score': score,
+        'reasoning': gpt_result.get('reasoning', ''),
+        'recommendations': gpt_result.get('recommendations', [])
+    }
 
     print(f"  ✅ Generated {len(recommendations['recommendations'])} recommendations")
-    print(f"  Overall Score: {recommendations['overall_score']}/5.0")
+    print(f"  Overall Score (formula): {score}/5.0")
 
     return recommendations
 
@@ -1400,13 +1496,18 @@ def analyze_creative_final(image_path, filter_legal=True, regenerate=False):
     zones_with_attention, total_zones_attention = calculate_attention(saliency_map, all_zones)
     background_attention = 100 - total_zones_attention
 
-    # Step 8: Generate Recommendations
+    # Step 7.5: Calculate Score (deterministic formula)
+    formula_score = calculate_score(zones_with_attention, total_zones_attention, background_attention)
+    print(f"  Formula score: {formula_score}/5.0")
+
+    # Step 8: Generate Recommendations (GPT-5.2 — reasoning + recs only, score from formula)
     print_step(8, "Generate Recommendations (GPT-5.2)")
     recommendations = generate_recommendations(
         zones_with_attention,
         total_zones_attention,
         background_attention,
-        image_path=image_path
+        image_path=image_path,
+        precalculated_score=formula_score
     )
 
     # Step 9: Create Visualization
