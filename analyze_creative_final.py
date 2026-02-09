@@ -897,12 +897,19 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
     """Build a structured edit prompt for GPT Image using GPT-5.2"""
     print("  Building edit prompt with GPT-5.2...")
 
-    # Filter: only High and Medium priority recommendations
-    filtered_recs = [r for r in recommendations if r.get('priority') in ('High', 'Medium')]
+    # Filter: only High and Medium priority recommendations (case-insensitive)
+    for r in recommendations:
+        print(f"    Rec priority='{r.get('priority')}' title='{r.get('title', '')[:40]}'")
+    filtered_recs = [
+        r for r in recommendations
+        if str(r.get('priority', '')).strip().lower() in ('high', 'medium')
+    ]
 
     if not filtered_recs:
         print("  ⚠️ No High/Medium recommendations — skipping regeneration")
         return None
+
+    print(f"  Found {len(filtered_recs)} High/Medium recommendations")
 
     zones_summary = []
     for zone in zones:
