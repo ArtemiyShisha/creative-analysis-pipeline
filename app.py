@@ -323,7 +323,7 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.image(uploaded_file, caption="Загруженное изображение", use_container_width=True)
+        st.image(uploaded_file, caption="Загруженное изображение", width="stretch")
 
 if st.button("Анализировать", type="primary", use_container_width=True):
 
@@ -376,7 +376,7 @@ if st.button("Анализировать", type="primary", use_container_width=T
         # Heatmap visualization
         st.markdown("### Тепловая карта внимания")
         if os.path.exists(heatmap_path):
-            st.image(heatmap_path, use_container_width=True)
+            st.image(heatmap_path, width="stretch")
         else:
             st.warning("Тепловая карта не найдена")
 
@@ -440,10 +440,10 @@ if st.button("Анализировать", type="primary", use_container_width=T
                         col1, col2 = st.columns(2)
                         with col1:
                             st.markdown("**Оригинал**")
-                            st.image(temp_path, use_container_width=True)
+                            st.image(temp_path, width="stretch")
                         with col2:
                             st.markdown("**Улучшенный вариант**")
-                            st.image(result_path, use_container_width=True)
+                            st.image(result_path, width="stretch")
 
                         # Download improved JPG
                         with open(result_path, 'rb') as f:
