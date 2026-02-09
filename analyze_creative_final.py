@@ -925,46 +925,67 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
         for r in filtered_recs
     ])
 
-    prompt = f"""Ты — промпт-инженер. Твоя задача — превратить рекомендации по улучшению рекламного баннера в ТОЧНУЮ инструкцию для AI-модели редактирования изображений (GPT Image edit).
+    # Extract text content from zones for the prompt
+    text_zones = [z for z in zones if z['type'] in ('header', 'subheader', 'cta', 'description')]
+    text_content = "\n".join([
+        f"- {z['type']}: \"{z['label']}\""
+        for z in text_zones
+    ])
 
-**Размер изображения:** {img_width}x{img_height} пикселей
+    logo_zones = [z for z in zones if z['type'] == 'logo']
+    logo_info = logo_zones[0]['label'] if logo_zones else "unknown brand"
 
-**Текущие зоны на баннере:**
+    person_zones = [z for z in zones if z['type'] == 'person']
+    has_person = len(person_zones) > 0
+
+    prompt = f"""Ты — промпт-инженер. Твоя задача — создать ПОДРОБНОЕ описание улучшенного рекламного баннера для генерации через AI (GPT Image generation).
+
+У нас есть оригинальный баннер. На его основе нужно сгенерировать НОВЫЙ, улучшенный вариант.
+
+**Размер:** {img_width}x{img_height} пикселей (широкий горизонтальный баннер)
+
+**Текст на оригинальном баннере (на русском):**
+{text_content}
+
+**Логотип:** {logo_info}
+
+**Есть человек/фото:** {"Да — мужчина/женщина на фото" if has_person else "Нет"}
+
+**Зоны и их расположение:**
 {json.dumps(zones_summary, indent=2, ensure_ascii=False)}
 
-**Рекомендации по улучшению:**
+**Рекомендации по улучшению (применить!):**
 {recs_text}
 
 ---
 
 ## ТВОЯ ЗАДАЧА
 
-Сформируй JSON с инструкцией для редактирования:
+Создай JSON с промптом для ГЕНЕРАЦИИ нового баннера:
 
-1. **edit_prompt** — промпт на АНГЛИЙСКОМ для GPT Image edit. Чёткая инструкция что изменить визуально.
+1. **generation_prompt** — подробное описание баннера на АНГЛИЙСКОМ. Это описание для GPT Image generation (не edit). Опиши:
+   - Общую композицию и layout
+   - Цветовую схему (из оригинала)
+   - Какой текст должен быть (на русском! в кавычках, точно как нужно)
+   - Расположение элементов (лого, текст, CTA, фото)
+   - Примени рекомендации: если рекомендация просит изменить текст — измени. Если просит добавить CTA — добавь. Если просит перекомпоновать — перекомпонуй.
 
-2. **preserve** — список того, что НЕЛЬЗЯ менять.
+2. **preserve** — что сохранить из оригинала (цвета бренда, стиль, общая тема)
 
-## КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА
+## ПРАВИЛА
 
-1. **СОХРАНИТЬ ВЕСЬ ТЕКСТ КАК ЕСТЬ.** Все надписи на баннере должны остаться ТОЧНО такими же — тот же язык, те же слова, тот же шрифт. НЕ переводить, НЕ менять, НЕ удалять текст.
-2. **СОХРАНИТЬ ЯЗЫК.** Если баннер на русском — текст ОБЯЗАН остаться на русском. Если на английском — на английском.
-3. **СОХРАНИТЬ ЛОГОТИП** точно как есть — позиция, стиль, написание.
-4. **СОХРАНИТЬ ЛЮДЕЙ/ЛИЦА** если есть — не менять внешность, позу, одежду.
-5. **НЕ ДОБАВЛЯТЬ НОВЫЕ ЭЛЕМЕНТЫ** — никаких сертификатов, бейджей, иконок, дополнительных надписей.
-6. **ТОЛЬКО ВИЗУАЛЬНЫЕ ПРАВКИ** — менять можно: размер/контраст/яркость элементов, расположение, фон, цветовой акцент. Нельзя: текст, контент, брендинг.
-
-Правила для edit_prompt:
-- Пиши на английском (модель лучше понимает инструкции на английском)
-- Описывай КОНКРЕТНЫЕ визуальные изменения
-- Указывай позиции ("bottom-right", "top-left", "center")
-- ОБЯЗАТЕЛЬНО добавь: "CRITICAL: Keep ALL existing text EXACTLY as-is — same language, same words, same font. Do NOT translate, replace, or remove any text. Do NOT add any new text, labels, badges, or icons."
-- ОБЯЗАТЕЛЬНО добавь: "Preserve the brand logo, style, color palette, and overall composition."
+1. **ТЕКСТ ТОЛЬКО НА РУССКОМ** — весь текст на баннере должен быть на русском языке. Пиши точные русские фразы в кавычках.
+2. **Формат "wide horizontal advertising banner"** — это горизонтальный баннер, не квадрат.
+3. **Стиль оригинала** — сохрани цветовую гамму, стиль бренда, профессиональный вид.
+4. **Применяй рекомендации** — если рекомендация просит сократить текст, упростить УТП, добавить CTA — делай это.
+5. **Будь конкретным** — опиши точные цвета, позиции, размеры шрифтов (large, medium, small).
+6. **Не добавляй лишнего** — никаких сертификатов, бейджей, водяных знаков, рамок.
+{f'7. **Человек** — если на оригинале есть человек, опиши "a professional photo of a person" в той же позиции. Не описывай расу/внешность подробно.' if has_person else ''}
 
 Верни ТОЛЬКО JSON:
 {{{{
-    "edit_prompt": "Edit this advertising banner: ...",
-    "preserve": ["all existing text exactly as-is", "brand logo", "color palette", "..."]
+    "generation_prompt": "A wide horizontal advertising banner ...",
+    "preserve": ["brand color scheme", "..."]
 }}}}"""
 
     payload = {
@@ -972,7 +993,7 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
         'messages': [
             {
                 'role': 'system',
-                'content': 'You are a prompt engineer specializing in AI image editing instructions. You translate marketing recommendations into precise visual editing commands.'
+                'content': 'You are a prompt engineer specializing in AI image generation. You create detailed visual descriptions for banner generation, applying marketing recommendations while preserving brand identity.'
             },
             {
                 'role': 'user',
@@ -1018,8 +1039,13 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
 
     try:
         edit_data = json.loads(text)
-        print(f"  ✅ Edit prompt built ({len(edit_data['edit_prompt'])} chars)")
+        # Support both old 'edit_prompt' and new 'generation_prompt' keys
+        prompt_key = 'generation_prompt' if 'generation_prompt' in edit_data else 'edit_prompt'
+        print(f"  ✅ Generation prompt built ({len(edit_data[prompt_key])} chars)")
         print(f"  Preserve: {edit_data.get('preserve', [])}")
+        # Normalize to 'edit_prompt' key for downstream compatibility
+        if 'generation_prompt' in edit_data:
+            edit_data['edit_prompt'] = edit_data.pop('generation_prompt')
         return edit_data
     except Exception as e:
         error_msg = f"Failed to parse GPT-5.2 response as JSON: {e}. Raw: {text[:300]}"
@@ -1031,95 +1057,108 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
 # ============================================================================
 
 def regenerate_creative(image_path, edit_data, output_path):
-    """Regenerate creative using GPT Image edit mode"""
-    print("  Regenerating creative with GPT Image...")
+    """Regenerate creative using GPT Image generation mode"""
+    print("  Generating improved banner with GPT Image...")
 
-    edit_prompt = edit_data['edit_prompt']
+    generation_prompt = edit_data['edit_prompt']
 
-    # Add preserve instructions to prompt
+    # Add preserve instructions
     preserve = edit_data.get('preserve', [])
     if preserve:
-        edit_prompt += f"\n\nIMPORTANT: Preserve these elements unchanged: {', '.join(preserve)}."
+        generation_prompt += f"\n\nPreserve these brand elements: {', '.join(preserve)}."
 
-    # Always add text preservation instruction
-    edit_prompt += "\n\nCRITICAL RULE: Keep ALL existing text EXACTLY as-is in its original language. Do NOT translate, rewrite, remove, or replace any text on the banner. Do NOT add any new text, labels, badges, certificates, or icons that were not in the original image."
+    generation_prompt += "\n\nIMPORTANT: All text on the banner MUST be in Russian. This is a Russian-language advertisement. Make sure text is fully visible and not cut off."
 
-    # Determine best size for GPT Image based on original aspect ratio
+    # Get original dimensions for cropping
     img = Image.open(image_path)
     orig_width, orig_height = img.size
-    aspect = orig_width / orig_height
-
-    # GPT Image supported sizes
-    if aspect > 1.3:
-        size = "1536x1024"  # landscape
-    elif aspect < 0.77:
-        size = "1024x1536"  # portrait
-    else:
-        size = "1024x1024"  # square-ish
-
-    # Convert image to PNG for API (required format)
-    png_buffer = io.BytesIO()
-    img.convert('RGB').save(png_buffer, format='PNG')
-    png_buffer.seek(0)
+    orig_aspect = orig_width / orig_height
     img.close()
 
-    # API call with retry
+    # GPT Image supported sizes — pick closest to original aspect
+    if orig_aspect > 1.3:
+        size = "1536x1024"  # landscape (1.5:1)
+        gen_width, gen_height = 1536, 1024
+    elif orig_aspect < 0.77:
+        size = "1024x1536"  # portrait
+        gen_width, gen_height = 1024, 1536
+    else:
+        size = "1024x1024"  # square-ish
+        gen_width, gen_height = 1024, 1024
+
+    print(f"  Original: {orig_width}x{orig_height} (aspect {orig_aspect:.2f})")
+    print(f"  Generating at: {size}")
+    print(f"  Prompt ({len(generation_prompt)} chars): {generation_prompt[:200]}...")
+
+    # API call — generation mode (not edit)
     max_retries = 2
     for attempt in range(max_retries):
         try:
             response = requests.post(
-                'https://api.openai.com/v1/images/edits',
+                'https://api.openai.com/v1/images/generations',
                 headers={
+                    'Content-Type': 'application/json',
                     'Authorization': f'Bearer {API_KEY}'
                 },
-                files={
-                    'image': ('image.png', png_buffer, 'image/png')
-                },
-                data={
+                json={
                     'model': 'gpt-image-1',
-                    'prompt': edit_prompt,
+                    'prompt': generation_prompt,
                     'size': size,
-                    'quality': 'high'
+                    'quality': 'high',
+                    'n': 1
                 },
-                timeout=120
+                timeout=180
             )
 
             if response.status_code == 200:
                 result = response.json()
-                # GPT Image returns base64 encoded image
                 image_b64 = result['data'][0]['b64_json']
                 image_bytes = base64.b64decode(image_b64)
 
-                # Save and resize back to original dimensions
-                improved_img = Image.open(io.BytesIO(image_bytes))
-                improved_img = improved_img.resize((orig_width, orig_height), Image.LANCZOS)
+                generated_img = Image.open(io.BytesIO(image_bytes))
 
-                # Convert to RGB and save as JPG
-                if improved_img.mode == 'RGBA':
-                    improved_img = improved_img.convert('RGB')
-                improved_img.save(output_path, quality=95)
-                improved_img.close()
+                # Center-crop to match original aspect ratio (no stretching)
+                gen_aspect = gen_width / gen_height
+                if abs(gen_aspect - orig_aspect) > 0.05:
+                    # Need to crop
+                    if orig_aspect > gen_aspect:
+                        # Original is wider — crop top/bottom
+                        target_h = int(gen_width / orig_aspect)
+                        top = (gen_height - target_h) // 2
+                        generated_img = generated_img.crop((0, top, gen_width, top + target_h))
+                    else:
+                        # Original is taller — crop left/right
+                        target_w = int(gen_height * orig_aspect)
+                        left = (gen_width - target_w) // 2
+                        generated_img = generated_img.crop((left, 0, left + target_w, gen_height))
+
+                # Resize to original dimensions
+                generated_img = generated_img.resize((orig_width, orig_height), Image.LANCZOS)
+
+                # Convert to RGB and save
+                if generated_img.mode == 'RGBA':
+                    generated_img = generated_img.convert('RGB')
+                generated_img.save(output_path, quality=95)
+                generated_img.close()
 
                 print(f"  ✅ Saved improved creative to: {output_path}")
                 return output_path
 
             elif response.status_code == 400 and 'content_policy' in response.text.lower():
-                print(f"  ⚠️ Content policy rejection — cannot regenerate this image")
+                print(f"  ⚠️ Content policy rejection — cannot generate this image")
                 return None
             elif response.status_code == 429 or 'billing' in response.text.lower():
                 print(f"  ⚠️ Rate limit or billing error: {response.text}")
                 return None
             else:
-                print(f"  ⚠️ GPT Image error (attempt {attempt+1}): {response.status_code} - {response.text}")
+                print(f"  ⚠️ GPT Image error (attempt {attempt+1}): {response.status_code} - {response.text[:200]}")
                 if attempt < max_retries - 1:
-                    png_buffer.seek(0)
                     continue
                 return None
 
         except requests.exceptions.Timeout:
             print(f"  ⚠️ Timeout (attempt {attempt+1})")
             if attempt < max_retries - 1:
-                png_buffer.seek(0)
                 continue
             return None
 
