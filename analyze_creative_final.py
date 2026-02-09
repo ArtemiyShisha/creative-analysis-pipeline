@@ -934,21 +934,30 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
 
 Сформируй JSON с инструкцией для редактирования:
 
-1. **edit_prompt** — промпт на АНГЛИЙСКОМ для GPT Image edit. Это должна быть чёткая инструкция что изменить на изображении. Начни с "Edit this advertising banner:" и перечисли конкретные изменения.
+1. **edit_prompt** — промпт на АНГЛИЙСКОМ для GPT Image edit. Чёткая инструкция что изменить визуально.
 
-2. **preserve** — список того, что НЕЛЬЗЯ менять (бренд-элементы, стиль, цвета, продукт).
+2. **preserve** — список того, что НЕЛЬЗЯ менять.
+
+## КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА
+
+1. **СОХРАНИТЬ ВЕСЬ ТЕКСТ КАК ЕСТЬ.** Все надписи на баннере должны остаться ТОЧНО такими же — тот же язык, те же слова, тот же шрифт. НЕ переводить, НЕ менять, НЕ удалять текст.
+2. **СОХРАНИТЬ ЯЗЫК.** Если баннер на русском — текст ОБЯЗАН остаться на русском. Если на английском — на английском.
+3. **СОХРАНИТЬ ЛОГОТИП** точно как есть — позиция, стиль, написание.
+4. **СОХРАНИТЬ ЛЮДЕЙ/ЛИЦА** если есть — не менять внешность, позу, одежду.
+5. **НЕ ДОБАВЛЯТЬ НОВЫЕ ЭЛЕМЕНТЫ** — никаких сертификатов, бейджей, иконок, дополнительных надписей.
+6. **ТОЛЬКО ВИЗУАЛЬНЫЕ ПРАВКИ** — менять можно: размер/контраст/яркость элементов, расположение, фон, цветовой акцент. Нельзя: текст, контент, брендинг.
 
 Правила для edit_prompt:
-- Пиши на английском (GPT Image лучше понимает)
-- Описывай КОНКРЕТНЫЕ визуальные изменения, не абстрактные
+- Пиши на английском (модель лучше понимает инструкции на английском)
+- Описывай КОНКРЕТНЫЕ визуальные изменения
 - Указывай позиции ("bottom-right", "top-left", "center")
-- Обязательно добавь: "Preserve the brand style, color palette, and overall design language"
-- НЕ описывай текст кириллицей — модель плохо рендерит кириллицу
+- ОБЯЗАТЕЛЬНО добавь: "CRITICAL: Keep ALL existing text EXACTLY as-is — same language, same words, same font. Do NOT translate, replace, or remove any text. Do NOT add any new text, labels, badges, or icons."
+- ОБЯЗАТЕЛЬНО добавь: "Preserve the brand logo, style, color palette, and overall composition."
 
 Верни ТОЛЬКО JSON:
 {{{{
     "edit_prompt": "Edit this advertising banner: ...",
-    "preserve": ["brand logo", "color palette", "..."]
+    "preserve": ["all existing text exactly as-is", "brand logo", "color palette", "..."]
 }}}}"""
 
     payload = {
@@ -1014,6 +1023,9 @@ def regenerate_creative(image_path, edit_data, output_path):
     preserve = edit_data.get('preserve', [])
     if preserve:
         edit_prompt += f"\n\nIMPORTANT: Preserve these elements unchanged: {', '.join(preserve)}."
+
+    # Always add text preservation instruction
+    edit_prompt += "\n\nCRITICAL RULE: Keep ALL existing text EXACTLY as-is in its original language. Do NOT translate, rewrite, remove, or replace any text on the banner. Do NOT add any new text, labels, badges, certificates, or icons that were not in the original image."
 
     # Determine best size for GPT Image based on original aspect ratio
     img = Image.open(image_path)
