@@ -1052,8 +1052,17 @@ def build_edit_prompt(zones, recommendations, img_width, img_height, image_path=
 # ============================================================================
 
 def regenerate_creative(image_path, edit_data, output_path):
-    """Regenerate creative using GPT Image edit mode with crop"""
-    print("  Editing banner with GPT Image...")
+    """Regenerate creative using GPT Image edit mode with padding to preserve aspect ratio.
+
+    Wide banners (e.g. 1320x492, aspect 2.68:1) don't fit GPT Image's max 1536x1024 (1.5:1).
+    Instead of letting GPT Image internally stretch/distort the image, we:
+    1. Create a 1536x1024 canvas filled with the banner's dominant background color
+    2. Place the banner centered on this canvas (scaled to fit width)
+    3. Send the padded image to GPT Image edit API
+    4. Crop the result back to the exact region where the banner was placed
+    5. Resize to original dimensions
+    """
+    print("  Editing banner with GPT Image (padded approach)...")
 
     edit_prompt = edit_data['edit_prompt']
 
@@ -1063,32 +1072,65 @@ def regenerate_creative(image_path, edit_data, output_path):
         edit_prompt += f"\n\nPreserve unchanged: {', '.join(preserve)}."
 
     edit_prompt += "\n\nAll text on the banner MUST remain in Russian. Do not translate to English. Make sure all text is fully visible and not cut off by edges."
+    edit_prompt += "\n\nIMPORTANT: The banner is placed in the CENTER of the canvas. Only edit the banner area. Do NOT add content to the empty padding areas above and below the banner — leave them as solid background."
 
     # Get original dimensions
-    img = Image.open(image_path)
+    img = Image.open(image_path).convert('RGB')
     orig_width, orig_height = img.size
     orig_aspect = orig_width / orig_height
 
-    # GPT Image supported sizes
+    # Choose GPT Image output size
     if orig_aspect > 1.3:
         size = "1536x1024"
-        gen_width, gen_height = 1536, 1024
+        canvas_w, canvas_h = 1536, 1024
     elif orig_aspect < 0.77:
         size = "1024x1536"
-        gen_width, gen_height = 1024, 1536
+        canvas_w, canvas_h = 1024, 1536
     else:
         size = "1024x1024"
-        gen_width, gen_height = 1024, 1024
+        canvas_w, canvas_h = 1024, 1024
 
     print(f"  Original: {orig_width}x{orig_height} (aspect {orig_aspect:.2f})")
-    print(f"  Edit size: {size}")
-    print(f"  Prompt ({len(edit_prompt)} chars): {edit_prompt[:200]}...")
+    print(f"  Canvas: {canvas_w}x{canvas_h}")
 
-    # Convert image to PNG for API
-    png_buffer = io.BytesIO()
-    img.convert('RGB').save(png_buffer, format='PNG')
-    png_buffer.seek(0)
+    # Scale banner to fit canvas width, then pad vertically (or vice versa)
+    scale = min(canvas_w / orig_width, canvas_h / orig_height)
+    scaled_w = int(orig_width * scale)
+    scaled_h = int(orig_height * scale)
+    scaled_img = img.resize((scaled_w, scaled_h), Image.LANCZOS)
     img.close()
+
+    # Get dominant background color from edges of scaled image
+    pixels = []
+    for x in range(scaled_w):
+        pixels.append(scaled_img.getpixel((x, 0)))
+        pixels.append(scaled_img.getpixel((x, scaled_h - 1)))
+    for y in range(scaled_h):
+        pixels.append(scaled_img.getpixel((0, y)))
+        pixels.append(scaled_img.getpixel((scaled_w - 1, y)))
+    # Average edge color
+    avg_r = sum(p[0] for p in pixels) // len(pixels)
+    avg_g = sum(p[1] for p in pixels) // len(pixels)
+    avg_b = sum(p[2] for p in pixels) // len(pixels)
+    bg_color = (avg_r, avg_g, avg_b)
+    print(f"  Background fill color: RGB{bg_color}")
+
+    # Create padded canvas and place banner centered
+    canvas = Image.new('RGB', (canvas_w, canvas_h), bg_color)
+    paste_x = (canvas_w - scaled_w) // 2
+    paste_y = (canvas_h - scaled_h) // 2
+    canvas.paste(scaled_img, (paste_x, paste_y))
+    scaled_img.close()
+
+    print(f"  Banner placed at ({paste_x}, {paste_y}), size {scaled_w}x{scaled_h} on {canvas_w}x{canvas_h} canvas")
+
+    # Convert padded canvas to PNG for API
+    png_buffer = io.BytesIO()
+    canvas.save(png_buffer, format='PNG')
+    png_buffer.seek(0)
+    canvas.close()
+
+    print(f"  Prompt ({len(edit_prompt)} chars): {edit_prompt[:200]}...")
 
     # API call — edit mode (preserves original design)
     max_retries = 2
@@ -1118,27 +1160,18 @@ def regenerate_creative(image_path, edit_data, output_path):
 
                 edited_img = Image.open(io.BytesIO(image_bytes))
 
-                # Center-crop to match original aspect ratio (avoid stretching)
-                gen_aspect = gen_width / gen_height
-                if abs(gen_aspect - orig_aspect) > 0.05:
-                    if orig_aspect > gen_aspect:
-                        # Original is wider — crop top/bottom
-                        target_h = int(gen_width / orig_aspect)
-                        top = (gen_height - target_h) // 2
-                        edited_img = edited_img.crop((0, top, gen_width, top + target_h))
-                    else:
-                        # Original is taller — crop left/right
-                        target_w = int(gen_height * orig_aspect)
-                        left = (gen_width - target_w) // 2
-                        edited_img = edited_img.crop((left, 0, left + target_w, gen_height))
+                # Crop back to the exact region where the banner was placed
+                cropped = edited_img.crop((paste_x, paste_y, paste_x + scaled_w, paste_y + scaled_h))
+                edited_img.close()
 
                 # Resize to original dimensions
-                edited_img = edited_img.resize((orig_width, orig_height), Image.LANCZOS)
+                final = cropped.resize((orig_width, orig_height), Image.LANCZOS)
+                cropped.close()
 
-                if edited_img.mode == 'RGBA':
-                    edited_img = edited_img.convert('RGB')
-                edited_img.save(output_path, quality=95)
-                edited_img.close()
+                if final.mode == 'RGBA':
+                    final = final.convert('RGB')
+                final.save(output_path, quality=95)
+                final.close()
 
                 print(f"  ✅ Saved improved creative to: {output_path}")
                 return output_path
