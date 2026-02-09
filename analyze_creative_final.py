@@ -994,8 +994,9 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
     )
 
     if response.status_code != 200:
-        print(f"  ⚠️ GPT-5.2 error: {response.status_code} - {response.text}")
-        return None
+        error_msg = f"GPT-5.2 API error: {response.status_code} - {response.text[:200]}"
+        print(f"  ⚠️ {error_msg}")
+        raise Exception(error_msg)
 
     result = response.json()
     text = result['choices'][0]['message']['content'].strip()
@@ -1013,8 +1014,9 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
         print(f"  Preserve: {edit_data.get('preserve', [])}")
         return edit_data
     except Exception as e:
-        print(f"  ⚠️ Failed to parse edit prompt: {e}")
-        return None
+        error_msg = f"Failed to parse GPT-5.2 response as JSON: {e}. Raw: {text[:300]}"
+        print(f"  ⚠️ {error_msg}")
+        raise Exception(error_msg)
 
 # ============================================================================
 # STEP 11: Regenerate Creative with GPT Image
