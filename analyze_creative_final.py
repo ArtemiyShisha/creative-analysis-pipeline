@@ -889,6 +889,117 @@ def generate_recommendations(zones, total_zones_attention, background_attention)
     return recommendations
 
 # ============================================================================
+# STEP 10: Build Edit Prompt for Regeneration
+# ============================================================================
+
+def build_edit_prompt(zones, recommendations, img_width, img_height):
+    """Build a structured edit prompt for GPT Image using GPT-5.2"""
+    print("  Building edit prompt with GPT-5.2...")
+
+    # Filter: only High and Medium priority recommendations
+    filtered_recs = [r for r in recommendations if r.get('priority') in ('High', 'Medium')]
+
+    if not filtered_recs:
+        print("  ⚠️ No High/Medium recommendations — skipping regeneration")
+        return None
+
+    zones_summary = []
+    for zone in zones:
+        zones_summary.append({
+            'type': zone['type'],
+            'label': zone['label'][:50],
+            'bbox': zone['bbox'],
+            'attention_pct': zone['attention_pct']
+        })
+
+    recs_text = "\n".join([
+        f"- [{r['priority']}] {r['title']}: {r['description']}"
+        for r in filtered_recs
+    ])
+
+    prompt = f"""Ты — промпт-инженер. Твоя задача — превратить рекомендации по улучшению рекламного баннера в ТОЧНУЮ инструкцию для AI-модели редактирования изображений (GPT Image edit).
+
+**Размер изображения:** {img_width}x{img_height} пикселей
+
+**Текущие зоны на баннере:**
+{json.dumps(zones_summary, indent=2, ensure_ascii=False)}
+
+**Рекомендации по улучшению:**
+{recs_text}
+
+---
+
+## ТВОЯ ЗАДАЧА
+
+Сформируй JSON с инструкцией для редактирования:
+
+1. **edit_prompt** — промпт на АНГЛИЙСКОМ для GPT Image edit. Это должна быть чёткая инструкция что изменить на изображении. Начни с "Edit this advertising banner:" и перечисли конкретные изменения.
+
+2. **preserve** — список того, что НЕЛЬЗЯ менять (бренд-элементы, стиль, цвета, продукт).
+
+Правила для edit_prompt:
+- Пиши на английском (GPT Image лучше понимает)
+- Описывай КОНКРЕТНЫЕ визуальные изменения, не абстрактные
+- Указывай позиции ("bottom-right", "top-left", "center")
+- Обязательно добавь: "Preserve the brand style, color palette, and overall design language"
+- НЕ описывай текст кириллицей — модель плохо рендерит кириллицу
+
+Верни ТОЛЬКО JSON:
+{{{{
+    "edit_prompt": "Edit this advertising banner: ...",
+    "preserve": ["brand logo", "color palette", "..."]
+}}}}"""
+
+    payload = {
+        'model': 'gpt-5.2',
+        'messages': [
+            {
+                'role': 'system',
+                'content': 'You are a prompt engineer specializing in AI image editing instructions. You translate marketing recommendations into precise visual editing commands.'
+            },
+            {
+                'role': 'user',
+                'content': prompt
+            }
+        ],
+        'max_completion_tokens': 1500,
+        'reasoning_effort': 'medium'
+    }
+
+    response = requests.post(
+        'https://api.openai.com/v1/chat/completions',
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {API_KEY}'
+        },
+        json=payload,
+        timeout=120
+    )
+
+    if response.status_code != 200:
+        print(f"  ⚠️ GPT-5.2 error: {response.status_code} - {response.text}")
+        return None
+
+    result = response.json()
+    text = result['choices'][0]['message']['content'].strip()
+
+    # Parse JSON
+    if text.startswith('```'):
+        lines = text.split('\n')
+        text = '\n'.join(lines[1:-1])
+        if text.startswith('json'):
+            text = text[4:].strip()
+
+    try:
+        edit_data = json.loads(text)
+        print(f"  ✅ Edit prompt built ({len(edit_data['edit_prompt'])} chars)")
+        print(f"  Preserve: {edit_data.get('preserve', [])}")
+        return edit_data
+    except Exception as e:
+        print(f"  ⚠️ Failed to parse edit prompt: {e}")
+        return None
+
+# ============================================================================
 # STEP 9: Create Visualization
 # ============================================================================
 
