@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import base64
+import io
 import requests
 import torch
 import numpy as np
@@ -998,6 +999,102 @@ def build_edit_prompt(zones, recommendations, img_width, img_height):
     except Exception as e:
         print(f"  ⚠️ Failed to parse edit prompt: {e}")
         return None
+
+# ============================================================================
+# STEP 11: Regenerate Creative with GPT Image
+# ============================================================================
+
+def regenerate_creative(image_path, edit_data, output_path):
+    """Regenerate creative using GPT Image edit mode"""
+    print("  Regenerating creative with GPT Image...")
+
+    edit_prompt = edit_data['edit_prompt']
+
+    # Add preserve instructions to prompt
+    preserve = edit_data.get('preserve', [])
+    if preserve:
+        edit_prompt += f"\n\nIMPORTANT: Preserve these elements unchanged: {', '.join(preserve)}."
+
+    # Determine best size for GPT Image based on original aspect ratio
+    img = Image.open(image_path)
+    orig_width, orig_height = img.size
+    aspect = orig_width / orig_height
+
+    # GPT Image supported sizes
+    if aspect > 1.3:
+        size = "1536x1024"  # landscape
+    elif aspect < 0.77:
+        size = "1024x1536"  # portrait
+    else:
+        size = "1024x1024"  # square-ish
+
+    # Convert image to PNG for API (required format)
+    png_buffer = io.BytesIO()
+    img.convert('RGB').save(png_buffer, format='PNG')
+    png_buffer.seek(0)
+    img.close()
+
+    # API call with retry
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                'https://api.openai.com/v1/images/edits',
+                headers={
+                    'Authorization': f'Bearer {API_KEY}'
+                },
+                files={
+                    'image': ('image.png', png_buffer, 'image/png')
+                },
+                data={
+                    'model': 'gpt-image-1',
+                    'prompt': edit_prompt,
+                    'size': size,
+                    'quality': 'high'
+                },
+                timeout=120
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                # GPT Image returns base64 encoded image
+                image_b64 = result['data'][0]['b64_json']
+                image_bytes = base64.b64decode(image_b64)
+
+                # Save and resize back to original dimensions
+                improved_img = Image.open(io.BytesIO(image_bytes))
+                improved_img = improved_img.resize((orig_width, orig_height), Image.LANCZOS)
+
+                # Convert to RGB and save as JPG
+                if improved_img.mode == 'RGBA':
+                    improved_img = improved_img.convert('RGB')
+                improved_img.save(output_path, quality=95)
+                improved_img.close()
+
+                print(f"  ✅ Saved improved creative to: {output_path}")
+                return output_path
+
+            elif response.status_code == 400 and 'content_policy' in response.text.lower():
+                print(f"  ⚠️ Content policy rejection — cannot regenerate this image")
+                return None
+            elif response.status_code == 429 or 'billing' in response.text.lower():
+                print(f"  ⚠️ Rate limit or billing error: {response.text}")
+                return None
+            else:
+                print(f"  ⚠️ GPT Image error (attempt {attempt+1}): {response.status_code} - {response.text}")
+                if attempt < max_retries - 1:
+                    png_buffer.seek(0)
+                    continue
+                return None
+
+        except requests.exceptions.Timeout:
+            print(f"  ⚠️ Timeout (attempt {attempt+1})")
+            if attempt < max_retries - 1:
+                png_buffer.seek(0)
+                continue
+            return None
+
+    return None
 
 # ============================================================================
 # STEP 9: Create Visualization
